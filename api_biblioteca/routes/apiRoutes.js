@@ -502,39 +502,55 @@ router.delete('/exemplares/:id', async (req, res) => {
 function criarRotasCrud(entidade) {
   // GET ALL (Com suporte a Paginação)
   router.get(`/${entidade}s`, async (req, res) => {
-    try {
-      const pagina = parseInt(req.query.pagina) || 1;
-      const limite = parseInt(req.query.limite) || 10;
-      const skip = (pagina - 1) * limite;
+  try {
+    const pagina = parseInt(req.query.pagina) || 1;
+    const limite = parseInt(req.query.limite) || 10;
+    const skip = (pagina - 1) * limite;
+    const termo = req.query.termo ? String(req.query.termo).trim() : null;
 
-      const [itens, totalItens] = await Promise.all([
-        prisma[entidade].findMany({
-          skip: skip,
-          take: limite,
-          include: includes[entidade] || undefined
-        }),
-        prisma[entidade].count()
-      ]);
-
-      let totalExemplares = null;
-      if (entidade === 'obra') {
-        totalExemplares = await prisma.exemplar.count();
-      }
-
-      res.json({
-        dados: itens,
-        paginacao: {
-          totalItens,
-          totalExemplares: totalExemplares ?? totalItens,
-          paginaAtual: pagina,
-          itensPorPagina: limite,
-          totalPaginas: Math.ceil(totalItens / limite)
-        }
-      });
-    } catch (err) {
-      res.status(500).json({ erro: err.message });
+    // Filtro de busca — só aplica para 'obra' por enquanto
+    let where = undefined;
+    if (termo && entidade === 'obra') {
+      where = {
+        OR: [
+          { titulo: { contains: termo, mode: 'insensitive' } },
+          { subtitulo: { contains: termo, mode: 'insensitive' } },
+          { autores: { some: { nome: { contains: termo, mode: 'insensitive' } } } }
+        ]
+      };
     }
-  });
+
+    const [itens, totalItens] = await Promise.all([
+      prisma[entidade].findMany({
+        where,
+        skip,
+        take: limite,
+        include: includes[entidade] || undefined
+      }),
+      prisma[entidade].count({ where })
+    ]);
+
+    let totalExemplares = null;
+    if (entidade === 'obra') {
+      totalExemplares = await prisma.exemplar.count({
+        where: where ? { obra: where } : undefined
+      });
+    }
+
+    res.json({
+      dados: itens,
+      paginacao: {
+        totalItens,
+        totalExemplares: totalExemplares ?? totalItens,
+        paginaAtual: pagina,
+        itensPorPagina: limite,
+        totalPaginas: Math.ceil(totalItens / limite)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
 
   // GET BY ID
   router.get(`/${entidade}s/:id`, async (req, res) => {
