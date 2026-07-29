@@ -168,6 +168,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         obraId: targetObraId,
         editoraId: editora ? editora.id : null,
         isbn: cleanIsbn,
+        tituloEdicao: titulo || null,
         paginas: paginas ? Number(paginas) : null,
         anoEdicao: anoEdicao ? Number(anoEdicao) : null,
         imagens: urlCapa 

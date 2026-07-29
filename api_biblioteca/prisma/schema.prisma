@@ -99,6 +99,7 @@ model Exemplar {
   anoEdicao         Int?
   isbn              String?
   paginas           Int?
+  tituloEdicao      String?
   estadoConservacao String       @default("Bom")
   lido              Boolean      @default(false)
   createdAt         DateTime     @default(now())
