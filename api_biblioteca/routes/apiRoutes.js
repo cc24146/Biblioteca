@@ -19,10 +19,21 @@ const modelos = [
 function criarRotasCrud(entidade) {
   
   // Mapeamento de inclusão automática de relacionamentos
-  const includes = {
-    obra: { autores: true, generos: true, capa: true },
-    exemplar: { obra: true, editora: true, idioma: true, localizacao: true }
-  };
+ const includes = {
+  obra: { 
+    autores: true, 
+    generos: true, 
+    capa: true, 
+    exemplares: {
+      include: {
+        editora: true,
+        idioma: true,
+        localizacao: true
+      }
+    } 
+  },
+  exemplar: { obra: true, editora: true, idioma: true, localizacao: true }
+};
 
   // GET ALL - Listar todos
   router.get(`/${entidade}s`, async (req, res) => {
