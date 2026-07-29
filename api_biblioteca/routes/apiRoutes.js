@@ -224,6 +224,15 @@ router.put('/exemplares/:id', async (req, res) => {
       }
       idiomaConnect = { connect: { id: idmExistente.id } };
     }
+    const { editora } = req.body;
+    let editoraConnect = undefined;
+    if (editora) {
+      let edExistente = await prisma.editora.findFirst({ where: { nome: editora } });
+      if (!edExistente) {
+        edExistente = await prisma.editora.create({ data: { nome: editora } });
+      }
+      editoraConnect = { connect: { id: edExistente.id } };
+    }
 
     const exemplarAtualizado = await prisma.exemplar.update({
       where: { id: id },
@@ -232,7 +241,8 @@ router.put('/exemplares/:id', async (req, res) => {
         anoEdicao: anoEdicao ? Number(anoEdicao) : null,
         isbn: isbn || undefined,
         localizacao: localizacaoConnect,
-        idioma: idiomaConnect
+        idioma: idiomaConnect,
+        editora: editoraConnect
       },
       include: {
         localizacao: true,
@@ -297,6 +307,22 @@ router.put('/obras/:id', async (req, res) => {
     res.json(obraAtualizada);
   } catch (err) {
     console.error('Erro ao atualizar obra:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Rota para deletar um exemplar pelo ID
+router.delete('/exemplares/:id', async (req, res) => {
+  const id = Number(req.params.id);
+
+  try {
+    await prisma.exemplar.delete({
+      where: { id: id },
+    });
+
+    res.json({ mensagem: 'Exemplar excluído com sucesso!' });
+  } catch (err) {
+    console.error('Erro ao excluir exemplar:', err);
     res.status(500).json({ erro: err.message });
   }
 });
