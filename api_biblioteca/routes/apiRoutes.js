@@ -227,6 +227,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       include: {
         imagens: true
       }
+      
     });
 
     // Checagem dos campos faltantes
@@ -240,6 +241,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
     if (!exemplar.localizacaoId) camposFaltantes.push('Localização');
     if (!exemplar.idiomaId) camposFaltantes.push('Idioma');
 
+    console.log('📸 Imagem salva no exemplar:', exemplar.imagens);
     console.log('\n----------------------------------------');
     console.log(`📚 Livro cadastrado via ISBN: "${obra.titulo}"`);
     if (camposFaltantes.length > 0) {
