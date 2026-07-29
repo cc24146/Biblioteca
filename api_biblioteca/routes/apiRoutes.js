@@ -60,7 +60,7 @@ function extrairCamposFaltantes({ titulo, nomeAutor, nomeEditora, paginas, anoEd
 // Rota para cadastrar livro/exemplar via ISBN
 router.post('/exemplares/isbn/:isbn', async (req, res) => {
   const cleanIsbn = req.params.isbn.replace(/[^0-9X]/gi, '');
-  const { obraId } = req.body; // Pega o ID da obra atual se enviado pelo Flutter
+  const { obraId } = req.body;
 
   try {
     let titulo = null;
@@ -80,8 +80,6 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
     );
 
-    console.log(`Status Google Books: ${googleResponse.status}`);
-
     if (googleResponse.ok) {
       const data = await googleResponse.json();
 
@@ -99,19 +97,14 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
           urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
         }
       }
-    } else {
-      console.log('Google Books falhou ou bloqueou a requisição.');
     }
 
     // 2. Fallback 1: BrasilAPI
     if (!titulo) {
-      console.log('Tentando fallback na BrasilAPI...');
       const brasilResponse = await fetch(
         `https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`,
         { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
       );
-
-      console.log(`Status BrasilAPI: ${brasilResponse.status}`);
 
       if (brasilResponse.ok) {
         const info = await brasilResponse.json();
@@ -129,9 +122,8 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       }
     }
 
-    // 3. Fallback 2: Open Library (preenche metadados e capa se ainda faltarem)
+    // 3. Fallback 2: Open Library
     if (!titulo || !subtitulo || !sinopse || !paginas || !anoEdicao || !nomeAutor || !nomeEditora || !urlCapa) {
-      console.log('Tentando fallback final na Open Library...');
       const openLibraryUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${cleanIsbn}&jscmd=data&format=json`;
 
       try {
@@ -163,22 +155,16 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
                 urlCapa = livroOpenLibrary.cover.medium || livroOpenLibrary.cover.large || livroOpenLibrary.cover.small;
               }
             }
-
-            console.log('Metadados preenchidos pela Open Library.');
           }
         }
       } catch (err) {
-        console.log('Falha ao consultar a Open Library para os dados do livro');
+        console.log('Falha ao consultar a Open Library');
       }
     }
 
     if (!titulo) {
-      console.log('Livro não encontrado em nenhuma das APIs.');
       return res.status(404).json({ erro: 'Livro não encontrado para este ISBN.' });
     }
-
-    console.log(`Livro encontrado: "${titulo}"`);
-    console.log('URL da capa capturada:', urlCapa);
 
     if (urlCapa) {
       urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
@@ -192,10 +178,8 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       anoEdicao
     });
 
-    // --- CADASTRO NO PRISMA ---
     let targetObraId = obraId ? Number(obraId) : null;
 
-    // Se NÃO passou um obraId, cria uma nova Obra
     if (!targetObraId) {
       let autor = null;
       if (nomeAutor) {
@@ -227,7 +211,6 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       editora = existente || await prisma.editora.create({ data: { nome: nomeEditora } });
     }
 
-    // Cria o Exemplar VINCULADO à Obra correta (targetObraId)
     const exemplar = await prisma.exemplar.create({
       data: {
         obraId: targetObraId,
@@ -243,7 +226,8 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       include: {
         imagens: true,
         localizacao: true,
-        idioma: true
+        idioma: true,
+        editora: true
       }
     });
 
@@ -260,13 +244,111 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
   }
 });
 
+// Rota para Cadastro Manual de Exemplar
+router.post('/exemplares/manual', async (req, res) => {
+  const { 
+    obraId, 
+    targetObraId,
+    tituloEdicao, 
+    isbn, 
+    paginas, 
+    anoEdicao, 
+    editoraId,
+    nomeEditora,
+    editora,      
+    localizacaoId,
+    localizacao, 
+    idiomaId, 
+    idioma,
+    urlCapa
+  } = req.body;
+
+  try {
+    let finalObraId = obraId ? Number(obraId) : (targetObraId ? Number(targetObraId) : null);
+
+    // 1. Se não recebeu um obraId, cria uma nova Obra com o título da edição
+    if (!finalObraId) {
+      const novaObra = await prisma.obra.create({
+        data: {
+          titulo: tituloEdicao || 'Obra sem título',
+        }
+      });
+      finalObraId = novaObra.id;
+    }
+
+    // 2. Trata / Resolve Editora (ID direto ou busca por Nome)
+    let finalEditoraId = editoraId ? Number(editoraId) : null;
+    const txtEditora = nomeEditora || editora;
+    if (!finalEditoraId && txtEditora) {
+      let edExistente = await prisma.editora.findFirst({ where: { nome: txtEditora } });
+      if (!edExistente) {
+        edExistente = await prisma.editora.create({ data: { nome: txtEditora } });
+      }
+      finalEditoraId = edExistente.id;
+    }
+
+    // 3. Trata / Resolve Localização
+    let finalLocalizacaoId = localizacaoId ? Number(localizacaoId) : null;
+    if (!finalLocalizacaoId && localizacao) {
+      let locExistente = await prisma.localizacao.findFirst({ where: { descricao: localizacao } });
+      if (!locExistente) {
+        locExistente = await prisma.localizacao.create({ data: { descricao: localizacao } });
+      }
+      finalLocalizacaoId = locExistente.id;
+    }
+
+    // 4. Trata / Resolve Idioma
+    let finalIdiomaId = idiomaId ? Number(idiomaId) : null;
+    if (!finalIdiomaId && idioma) {
+      let idmExistente = await prisma.idioma.findFirst({ where: { nome: idioma } });
+      if (!idmExistente) {
+        idmExistente = await prisma.idioma.create({ data: { nome: idioma } });
+      }
+      finalIdiomaId = idmExistente.id;
+    }
+
+    // 5. Cria o Exemplar vinculado à Obra
+    const exemplar = await prisma.exemplar.create({
+      data: {
+        obraId: finalObraId,
+        tituloEdicao: tituloEdicao || null,
+        isbn: isbn || null,
+        paginas: paginas ? Number(paginas) : null,
+        anoEdicao: anoEdicao ? Number(anoEdicao) : null,
+        editoraId: finalEditoraId,
+        localizacaoId: finalLocalizacaoId,
+        idiomaId: finalIdiomaId,
+
+        imagens: urlCapa 
+          ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
+          : undefined
+      },
+      include: {
+        editora: true,
+        localizacao: true,
+        idioma: true,
+        imagens: true
+      }
+    });
+
+    res.status(201).json({
+      mensagem: 'Exemplar manual cadastrado com sucesso!',
+      exemplar
+    });
+
+  } catch (err) {
+    console.error('❌ Erro ao cadastrar exemplar manual:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Rota dedicada para atualização de Exemplares com Relações
 router.put('/exemplares/:id', async (req, res) => {
   const id = Number(req.params.id);
-  const { paginas, anoEdicao, localizacao, idioma, isbn } = req.body;
+  const { paginas, anoEdicao, localizacao, idioma, editora, isbn } = req.body;
 
   try {
-    let localizacaoConnect = undefined;
+    let finalLocalizacaoId = undefined;
     if (localizacao) {
       let locExistente = await prisma.localizacao.findFirst({
         where: { descricao: localizacao }
@@ -276,10 +358,10 @@ router.put('/exemplares/:id', async (req, res) => {
           data: { descricao: localizacao }
         });
       }
-      localizacaoConnect = { connect: { id: locExistente.id } };
+      finalLocalizacaoId = locExistente.id;
     }
 
-    let idiomaConnect = undefined;
+    let finalIdiomaId = undefined;
     if (idioma) {
       let idmExistente = await prisma.idioma.findFirst({
         where: { nome: idioma }
@@ -289,16 +371,16 @@ router.put('/exemplares/:id', async (req, res) => {
           data: { nome: idioma }
         });
       }
-      idiomaConnect = { connect: { id: idmExistente.id } };
+      finalIdiomaId = idmExistente.id;
     }
-    const { editora } = req.body;
-    let editoraConnect = undefined;
+
+    let finalEditoraId = undefined;
     if (editora) {
       let edExistente = await prisma.editora.findFirst({ where: { nome: editora } });
       if (!edExistente) {
         edExistente = await prisma.editora.create({ data: { nome: editora } });
       }
-      editoraConnect = { connect: { id: edExistente.id } };
+      finalEditoraId = edExistente.id;
     }
 
     const exemplarAtualizado = await prisma.exemplar.update({
@@ -307,9 +389,9 @@ router.put('/exemplares/:id', async (req, res) => {
         paginas: paginas ? Number(paginas) : null,
         anoEdicao: anoEdicao ? Number(anoEdicao) : null,
         isbn: isbn || undefined,
-        localizacao: localizacaoConnect,
-        idioma: idiomaConnect,
-        editora: editoraConnect
+        localizacaoId: finalLocalizacaoId,
+        idiomaId: finalIdiomaId,
+        editoraId: finalEditoraId
       },
       include: {
         localizacao: true,
@@ -325,35 +407,12 @@ router.put('/exemplares/:id', async (req, res) => {
   }
 });
 
-// Rota para deletar uma Obra (e seus exemplares vinculados) pelo ID
-router.delete('/obras/:id', async (req, res) => {
-  const id = Number(req.params.id);
-
-  try {
-    // 1. Opcional: deletar dependências manuais caso o seu banco não utilize onDelete: Cascade no Prisma
-    await prisma.exemplar.deleteMany({
-      where: { obraId: id },
-    });
-
-    // 2. Deleta a Obra
-    await prisma.obra.delete({
-      where: { id: id },
-    });
-
-    res.json({ mensagem: 'Obra excluída com sucesso!' });
-  } catch (err) {
-    console.error('Erro ao excluir obra:', err);
-    res.status(500).json({ erro: err.message });
-  }
-});
-
 // Rota para atualizar os dados da Obra (Título, Subtítulo, Sinopse, Autores)
 router.put('/obras/:id', async (req, res) => {
   const id = Number(req.params.id);
   const { titulo, subtitulo, sinopse, autores } = req.body;
 
   try {
-    // Processa a lista de autores se for enviada em texto separado por vírgula
     let autoresConnect = undefined;
     if (autores && typeof autores === 'string') {
       const nomesAutores = autores.split(',').map(a => a.trim()).filter(a => a.length > 0);
@@ -369,7 +428,7 @@ router.put('/obras/:id', async (req, res) => {
       );
 
       autoresConnect = {
-        set: autoresIds // Sobrescreve as conexões antigas com os novos autores
+        set: autoresIds
       };
     }
 
@@ -396,6 +455,26 @@ router.put('/obras/:id', async (req, res) => {
     res.json(obraAtualizada);
   } catch (err) {
     console.error('Erro ao atualizar obra:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// Rota para deletar uma Obra (e seus exemplares vinculados) pelo ID
+router.delete('/obras/:id', async (req, res) => {
+  const id = Number(req.params.id);
+
+  try {
+    await prisma.exemplar.deleteMany({
+      where: { obraId: id },
+    });
+
+    await prisma.obra.delete({
+      where: { id: id },
+    });
+
+    res.json({ mensagem: 'Obra excluída com sucesso!' });
+  } catch (err) {
+    console.error('Erro ao excluir obra:', err);
     res.status(500).json({ erro: err.message });
   }
 });
@@ -428,7 +507,6 @@ function criarRotasCrud(entidade) {
       const limite = parseInt(req.query.limite) || 10;
       const skip = (pagina - 1) * limite;
 
-      // 1. Busca os registros paginados e o total de itens da entidade
       const [itens, totalItens] = await Promise.all([
         prisma[entidade].findMany({
           skip: skip,
@@ -438,18 +516,16 @@ function criarRotasCrud(entidade) {
         prisma[entidade].count()
       ]);
 
-      // 2. Se a entidade for 'obra', faz também a contagem total de exemplares
       let totalExemplares = null;
       if (entidade === 'obra') {
         totalExemplares = await prisma.exemplar.count();
       }
 
-      // 3. Retorna a resposta com o metadado `totalExemplares` incluso
       res.json({
         dados: itens,
         paginacao: {
-          totalItens,                                    // Total de Obras
-          totalExemplares: totalExemplares ?? totalItens, // Total de Exemplares (cópias)
+          totalItens,
+          totalExemplares: totalExemplares ?? totalItens,
           paginaAtual: pagina,
           itensPorPagina: limite,
           totalPaginas: Math.ceil(totalItens / limite)
@@ -459,97 +535,6 @@ function criarRotasCrud(entidade) {
       res.status(500).json({ erro: err.message });
     }
   });
-
-  router.post('/exemplares/manual', async (req, res) => {
-  const { 
-  obraId, 
-  tituloEdicao, 
-  isbn, 
-  paginas, 
-  anoEdicao, 
-  editoraId,      
-  localizacaoId, 
-  idiomaId, 
-  urlCapa,
-
-} = req.body;
-
-  try {
-    let targetObraId = obraId ? Number(obraId) : null;
-
-    // 1. Se não recebeu um obraId, cria a Obra básica com o título da edição
-    if (!targetObraId) {
-      const novaObra = await prisma.obra.create({
-        data: {
-          titulo: tituloEdicao || 'Obra sem título',
-        }
-      });
-      targetObraId = novaObra.id;
-    }
-
-    // 2. Trata / Conecta a Editora (busca ou cria)
-    let editoraConnect = undefined;
-    if (nomeEditora) {
-      let edExistente = await prisma.editora.findFirst({ where: { nome: nomeEditora } });
-      if (!edExistente) {
-        edExistente = await prisma.editora.create({ data: { nome: nomeEditora } });
-      }
-      editoraConnect = { connect: { id: edExistente.id } };
-    }
-
-    // 3. Trata / Conecta a Localização
-    let localizacaoConnect = undefined;
-    if (localizacao) {
-      let locExistente = await prisma.localizacao.findFirst({ where: { descricao: localizacao } });
-      if (!locExistente) {
-        locExistente = await prisma.localizacao.create({ data: { descricao: localizacao } });
-      }
-      localizacaoConnect = { connect: { id: locExistente.id } };
-    }
-
-    // 4. Trata / Conecta o Idioma
-    let idiomaConnect = undefined;
-    if (idioma) {
-      let idmExistente = await prisma.idioma.findFirst({ where: { nome: idioma } });
-      if (!idmExistente) {
-        idmExistente = await prisma.idioma.create({ data: { nome: idioma } });
-      }
-      idiomaConnect = { connect: { id: idmExistente.id } };
-    }
-
-    // 5. Cria o Exemplar vinculado à Obra e com as relações tratadas
-    const exemplar = await prisma.exemplar.create({
-      data: {
-        obraId: targetObraId,
-        tituloEdicao: tituloEdicao || null,
-        isbn: isbn || null,
-        paginas: paginas ? Number(paginas) : null,
-        anoEdicao: anoEdicao ? Number(anoEdicao) : null,
-        editoraId: editoraId ? Number(editoraId) : null,
-        localizacaoId: localizacaoId ? Number(localizacaoId) : null,
-        idiomaId: idiomaId ? Number(idiomaId) : null,
-
-        imagens: urlCapa 
-          ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
-          : undefined
-      },
-      include: {
-        editora: true,
-        localizacao: true,
-        idioma: true,
-        imagens: true
-      }
-    });
-    res.status(201).json({
-      mensagem: 'Exemplar manual cadastrado com sucesso!',
-      exemplar
-    });
-
-  } catch (err) {
-    console.error('❌ Erro ao cadastrar exemplar manual:', err);
-    res.status(500).json({ erro: err.message });
-  }
-});
 
   // GET BY ID
   router.get(`/${entidade}s/:id`, async (req, res) => {
@@ -565,7 +550,7 @@ function criarRotasCrud(entidade) {
     }
   });
 
-  // POST
+  // POST (Criação Genérica)
   router.post(`/${entidade}s`, async (req, res) => {
     try {
       const novoItem = await prisma[entidade].create({
@@ -577,7 +562,7 @@ function criarRotasCrud(entidade) {
     }
   });
 
-  // DELETE
+  // DELETE Genérico
   router.delete(`/${entidade}s/:id`, async (req, res) => {
     try {
       await prisma[entidade].delete({
