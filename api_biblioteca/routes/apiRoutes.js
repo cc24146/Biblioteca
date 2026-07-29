@@ -150,48 +150,85 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
 
   try {
     let titulo, subtitulo, sinopse, paginas, anoEdicao, nomeAutor, nomeEditora;
-    let urlCapa = null; // 👈 DECLARADA NO ESCOPO PRINCIPAL
+    let urlCapa = null;
 
-    // 1. Consulta Google Books
-    const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`);
-    const data = await response.json();
+    console.log(`\n🔎 Pesquisando ISBN: ${cleanIsbn}...`);
 
-    if (data.items && data.items.length > 0) {
-      const info = data.items[0].volumeInfo;
-      titulo = info.title || null;
-      subtitulo = info.subtitle || null;
-      sinopse = info.description || null;
-      paginas = info.pageCount || null;
-      anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
-      nomeAutor = info.authors ? info.authors[0] : null;
-      nomeEditora = info.publisher || null;
+    // 1. Tenta buscar no Google Books com User-Agent
+    const googleResponse = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`,
+      { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
+    );
 
-      // 🔍 Tenta pegar a imagem de qualquer tamanho disponível
-      if (info.imageLinks) {
-        urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
+    console.log(`📡 Status Google Books: ${googleResponse.status}`);
+
+    if (googleResponse.ok) {
+      const data = await googleResponse.json();
+
+      if (data.items && data.items.length > 0) {
+        const info = data.items[0].volumeInfo;
+        titulo = info.title || null;
+        subtitulo = info.subtitle || null;
+        sinopse = info.description || null;
+        paginas = info.pageCount || null;
+        anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
+        nomeAutor = info.authors ? info.authors[0] : null;
+        nomeEditora = info.publisher || null;
+
+        if (info.imageLinks) {
+          urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
+        }
+      }
+    } else {
+      console.log('⚠️ Google Books falhou ou bloqueou a requisição.');
+    }
+
+    // 2. Fallback: Se não achou no Google Books, tenta a BrasilAPI
+    if (!titulo) {
+      console.log('🔄 Tentando fallback na BrasilAPI...');
+      const brasilResponse = await fetch(
+        `https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`,
+        { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
+      );
+
+      console.log(`📡 Status BrasilAPI: ${brasilResponse.status}`);
+
+      if (brasilResponse.ok) {
+        const info = await brasilResponse.json();
+        titulo = info.title || null;
+        subtitulo = info.subtitle || null;
+        sinopse = info.synopsis || null;
+        paginas = info.page_count || null;
+        anoEdicao = info.year || null;
+        nomeAutor = info.authors ? info.authors[0] : null;
+        nomeEditora = info.publisher || null;
+
+        if (info.cover_url) {
+          urlCapa = info.cover_url;
+        }
       }
     }
 
-    // 💡 LOG DE DEPURACAO 1: Mostra se o Google enviou o link
-    console.log('🔍 Link bruto capturado da API:', urlCapa);
-
-    // Garante protocolo HTTPS para o Flutter conseguir carregar
-    if (urlCapa) {
-      urlCapa = urlCapa.replace('http://', 'https://');
-    }
-
+    // Se mesmo assim não encontrou título
     if (!titulo) {
+      console.log('❌ Livro não encontrado em nenhuma das APIs.');
       return res.status(404).json({ erro: 'Livro não encontrado para este ISBN.' });
     }
 
-    // --- Cadastra Autor ---
+    console.log(`✅ Livro encontrado: "${titulo}"`);
+    console.log('🔍 URL da capa capturada:', urlCapa);
+
+    if (urlCapa) {
+      urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
+    }
+
+    // --- CADASTRO NO PRISMA ---
     let autor = null;
     if (nomeAutor) {
       let existente = await prisma.autor.findFirst({ where: { nome: nomeAutor } });
       autor = existente || await prisma.autor.create({ data: { nome: nomeAutor } });
     }
 
-    // --- Cadastra Obra ---
     const obra = await prisma.obra.create({
       data: {
         titulo,
@@ -201,17 +238,12 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       }
     });
 
-    // --- Cadastra Editora ---
     let editora = null;
     if (nomeEditora) {
       let existente = await prisma.editora.findFirst({ where: { nome: nomeEditora } });
       editora = existente || await prisma.editora.create({ data: { nome: nomeEditora } });
     }
 
-    // 💡 LOG DE DEPURACAO 2: Checa a variável antes do Prisma
-    console.log('🔍 URL pronta para salvar no Prisma:', urlCapa);
-
-    // --- Cadastra Exemplar e Imagem ---
     const exemplar = await prisma.exemplar.create({
       data: {
         obraId: obra.id,
@@ -219,7 +251,6 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         isbn: cleanIsbn,
         paginas: paginas,
         anoEdicao: anoEdicao,
-        // Cria o registro na tabela Imagem vinculada ao Exemplar
         imagens: urlCapa 
           ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
           : undefined
@@ -231,7 +262,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       }
     });
 
-    console.log('📸 Imagem salva no exemplar:', exemplar.imagens);
+    console.log('📸 Imagens salvas no exemplar:', exemplar.imagens);
 
     res.status(201).json({
       mensagem: 'Exemplar cadastrado com sucesso!',
@@ -239,7 +270,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Erro no cadastro:', err);
+    console.error('❌ Erro interno:', err);
     res.status(500).json({ erro: err.message });
   }
 });
