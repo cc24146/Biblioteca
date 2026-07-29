@@ -424,14 +424,11 @@ function criarRotasCrud(entidade) {
   // GET ALL (Com suporte a Paginação)
   router.get(`/${entidade}s`, async (req, res) => {
     try {
-      // 1. Captura os query params com valores padrão (Página 1, 10 itens por página)
       const pagina = parseInt(req.query.pagina) || 1;
       const limite = parseInt(req.query.limite) || 10;
-
-      // 2. Calcula quantos registros deve pular
       const skip = (pagina - 1) * limite;
 
-      // 3. Executa a busca paginada e a contagem total em paralelo
+      // 1. Busca os registros paginados e o total de itens da entidade
       const [itens, totalItens] = await Promise.all([
         prisma[entidade].findMany({
           skip: skip,
@@ -441,11 +438,18 @@ function criarRotasCrud(entidade) {
         prisma[entidade].count()
       ]);
 
-      // 4. Retorna a resposta com metadados úteis para o front-end
+      // 2. Se a entidade for 'obra', faz também a contagem total de exemplares
+      let totalExemplares = null;
+      if (entidade === 'obra') {
+        totalExemplares = await prisma.exemplar.count();
+      }
+
+      // 3. Retorna a resposta com o metadado `totalExemplares` incluso
       res.json({
         dados: itens,
         paginacao: {
-          totalItens,
+          totalItens,                                    // Total de Obras
+          totalExemplares: totalExemplares ?? totalItens, // Total de Exemplares (cópias)
           paginaAtual: pagina,
           itensPorPagina: limite,
           totalPaginas: Math.ceil(totalItens / limite)
