@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 
-// Lista com os nomes dos modelos exatamente como definidos no schema.prisma (em minúsculo)
+// Lista com os nomes dos modelos
 const modelos = [
   'obra',
   'exemplar',
@@ -15,11 +15,8 @@ const modelos = [
   'usuario'
 ];
 
-// Função que gera as 5 rotas (GET, GET por ID, POST, PUT, DELETE) para cada entidade
-function criarRotasCrud(entidade) {
-  
-  // Mapeamento de inclusão automática de relacionamentos
- const includes = {
+// Mapeamento de inclusão automática de relacionamentos
+const includes = {
   obra: { 
     autores: true, 
     generos: true, 
@@ -36,115 +33,11 @@ function criarRotasCrud(entidade) {
   exemplar: { obra: true, editora: true, idioma: true, localizacao: true, imagens: true }
 };
 
-  // GET ALL - Listar todos
-  router.get(`/${entidade}s`, async (req, res) => {
-    try {
-      const itens = await prisma[entidade].findMany({
-        include: includes[entidade] || undefined
-      });
-      res.json(itens);
-    } catch (err) {
-      res.status(500).json({ erro: err.message });
-    }
-  });
+// ==========================================
+// 1. ROTAS CUSTOMIZADAS (Fora do Loop CRUD)
+// ==========================================
 
-  // GET BY ID - Buscar por ID
-  router.get(`/${entidade}s/:id`, async (req, res) => {
-    try {
-      const item = await prisma[entidade].findUnique({
-        where: { id: Number(req.params.id) },
-        include: includes[entidade] || undefined
-      });
-      if (!item) return res.status(404).json({ mensagem: 'Registro não encontrado' });
-      res.json(item);
-    } catch (err) {
-      res.status(500).json({ erro: err.message });
-    }
-  });
-
-  // POST - Criar novo
-  router.post(`/${entidade}s`, async (req, res) => {
-    try {
-      const novoItem = await prisma[entidade].create({
-        data: req.body
-      });
-      res.status(201).json(novoItem);
-    } catch (err) {
-      res.status(400).json({ erro: err.message });
-    }
-  });
-
-  // PUT - Atualizar por ID
-  // Rota dedicada para atualização de Exemplares com Relações (Localização e Idioma)
-  router.put('/exemplares/:id', async (req, res) => {
-    const id = Number(req.params.id);
-    const { paginas, anoEdicao, localizacao, idioma, isbn } = req.body;
-
-    try {
-      // 1. Trata ou cria a Localização (se informada)
-      let localizacaoConnect = undefined;
-      if (localizacao) {
-        let locExistente = await prisma.localizacao.findFirst({
-          where: { descricao: localizacao }
-        });
-        if (!locExistente) {
-          locExistente = await prisma.localizacao.create({
-            data: { descricao: localizacao }
-          });
-        }
-        localizacaoConnect = { connect: { id: locExistente.id } };
-      }
-
-      // 2. Trata ou cria o Idioma (se informado)
-      let idiomaConnect = undefined;
-      if (idioma) {
-        let idmExistente = await prisma.idioma.findFirst({
-          where: { nome: idioma }
-        });
-        if (!idmExistente) {
-          idmExistente = await prisma.idioma.create({
-            data: { nome: idioma }
-          });
-        }
-        idiomaConnect = { connect: { id: idmExistente.id } };
-      }
-
-      // 3. Atualiza o Exemplar no Banco
-      const exemplarAtualizado = await prisma.exemplar.update({
-        where: { id: id },
-        data: {
-          paginas: paginas ? Number(paginas) : null,
-          anoEdicao: anoEdicao ? Number(anoEdicao) : null,
-          isbn: isbn || undefined,
-          localizacao: localizacaoConnect,
-          idioma: idiomaConnect
-        },
-        include: {
-          localizacao: true,
-          idioma: true,
-          editora: true
-        }
-      });
-
-      res.json(exemplarAtualizado);
-    } catch (err) {
-      console.error('Erro ao atualizar exemplar:', err);
-      res.status(500).json({ erro: err.message });
-    }
-  });
-
-  // DELETE - Remover por ID
-  router.delete(`/${entidade}s/:id`, async (req, res) => {
-    try {
-      await prisma[entidade].delete({
-        where: { id: Number(req.params.id) }
-      });
-      res.json({ mensagem: 'Registro removido com sucesso' });
-    } catch (err) {
-      res.status(500).json({ erro: err.message });
-    }
-  });
-
+// Rota para cadastrar livro/exemplar via ISBN
 router.post('/exemplares/isbn/:isbn', async (req, res) => {
   const cleanIsbn = req.params.isbn.replace(/[^0-9X]/gi, '');
 
@@ -154,7 +47,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
 
     console.log(`\n🔎 Pesquisando ISBN: ${cleanIsbn}...`);
 
-    // 1. Tenta buscar no Google Books com User-Agent
+    // 1. Tenta buscar no Google Books
     const googleResponse = await fetch(
       `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`,
       { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
@@ -183,7 +76,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       console.log('⚠️ Google Books falhou ou bloqueou a requisição.');
     }
 
-    // 2. Fallback: Se não achou no Google Books, tenta a BrasilAPI
+    // 2. Fallback 1: BrasilAPI
     if (!titulo) {
       console.log('🔄 Tentando fallback na BrasilAPI...');
       const brasilResponse = await fetch(
@@ -209,7 +102,22 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       }
     }
 
-    // Se mesmo assim não encontrou título
+    // 3. Fallback 2: Open Library (Busca Capa se nenhuma API encontrou)
+    if (!urlCapa) {
+      console.log('🔄 Tentando buscar capa na Open Library...');
+      const openLibraryUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`;
+      
+      try {
+        const checkCover = await fetch(openLibraryUrl, { method: 'HEAD' });
+        if (checkCover.ok) {
+          urlCapa = openLibraryUrl;
+          console.log('🖼️ Capa encontrada na Open Library!');
+        }
+      } catch (err) {
+        console.log('⚠️ Falha ao checar capa na Open Library');
+      }
+    }
+
     if (!titulo) {
       console.log('❌ Livro não encontrado em nenhuma das APIs.');
       return res.status(404).json({ erro: 'Livro não encontrado para este ISBN.' });
@@ -274,9 +182,119 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
     res.status(500).json({ erro: err.message });
   }
 });
+
+// Rota dedicada para atualização de Exemplares com Relações
+router.put('/exemplares/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const { paginas, anoEdicao, localizacao, idioma, isbn } = req.body;
+
+  try {
+    let localizacaoConnect = undefined;
+    if (localizacao) {
+      let locExistente = await prisma.localizacao.findFirst({
+        where: { descricao: localizacao }
+      });
+      if (!locExistente) {
+        locExistente = await prisma.localizacao.create({
+          data: { descricao: localizacao }
+        });
+      }
+      localizacaoConnect = { connect: { id: locExistente.id } };
+    }
+
+    let idiomaConnect = undefined;
+    if (idioma) {
+      let idmExistente = await prisma.idioma.findFirst({
+        where: { nome: idioma }
+      });
+      if (!idmExistente) {
+        idmExistente = await prisma.idioma.create({
+          data: { nome: idioma }
+        });
+      }
+      idiomaConnect = { connect: { id: idmExistente.id } };
+    }
+
+    const exemplarAtualizado = await prisma.exemplar.update({
+      where: { id: id },
+      data: {
+        paginas: paginas ? Number(paginas) : null,
+        anoEdicao: anoEdicao ? Number(anoEdicao) : null,
+        isbn: isbn || undefined,
+        localizacao: localizacaoConnect,
+        idioma: idiomaConnect
+      },
+      include: {
+        localizacao: true,
+        idioma: true,
+        editora: true
+      }
+    });
+
+    res.json(exemplarAtualizado);
+  } catch (err) {
+    console.error('Erro ao atualizar exemplar:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+// ==========================================
+// 2. FUNÇÃO E GERADOR DE ROTAS GENÉRICAS (CRUD)
+// ==========================================
+
+function criarRotasCrud(entidade) {
+  // GET ALL
+  router.get(`/${entidade}s`, async (req, res) => {
+    try {
+      const itens = await prisma[entidade].findMany({
+        include: includes[entidade] || undefined
+      });
+      res.json(itens);
+    } catch (err) {
+      res.status(500).json({ erro: err.message });
+    }
+  });
+
+  // GET BY ID
+  router.get(`/${entidade}s/:id`, async (req, res) => {
+    try {
+      const item = await prisma[entidade].findUnique({
+        where: { id: Number(req.params.id) },
+        include: includes[entidade] || undefined
+      });
+      if (!item) return res.status(404).json({ mensagem: 'Registro não encontrado' });
+      res.json(item);
+    } catch (err) {
+      res.status(500).json({ erro: err.message });
+    }
+  });
+
+  // POST
+  router.post(`/${entidade}s`, async (req, res) => {
+    try {
+      const novoItem = await prisma[entidade].create({
+        data: req.body
+      });
+      res.status(201).json(novoItem);
+    } catch (err) {
+      res.status(400).json({ erro: err.message });
+    }
+  });
+
+  // DELETE
+  router.delete(`/${entidade}s/:id`, async (req, res) => {
+    try {
+      await prisma[entidade].delete({
+        where: { id: Number(req.params.id) }
+      });
+      res.json({ mensagem: 'Registro removido com sucesso' });
+    } catch (err) {
+      res.status(500).json({ erro: err.message });
+    }
+  });
 }
 
-// Registra as rotas no router para cada item da lista 'modelos'
+// Registra as rotas genéricas CRUD para cada modelo
 modelos.forEach(entidade => {
   criarRotasCrud(entidade);
 });
