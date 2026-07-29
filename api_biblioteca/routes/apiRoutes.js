@@ -74,15 +74,61 @@ function criarRotasCrud(entidade) {
   });
 
   // PUT - Atualizar por ID
-  router.put(`/${entidade}s/:id`, async (req, res) => {
+  // Rota dedicada para atualização de Exemplares com Relações (Localização e Idioma)
+  router.put('/exemplares/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    const { paginas, anoEdicao, localizacao, idioma, isbn } = req.body;
+
     try {
-      const atualizado = await prisma[entidade].update({
-        where: { id: Number(req.params.id) },
-        data: req.body
+      // 1. Trata ou cria a Localização (se informada)
+      let localizacaoConnect = undefined;
+      if (localizacao) {
+        let locExistente = await prisma.localizacao.findFirst({
+          where: { descricao: localizacao }
+        });
+        if (!locExistente) {
+          locExistente = await prisma.localizacao.create({
+            data: { descricao: localizacao }
+          });
+        }
+        localizacaoConnect = { connect: { id: locExistente.id } };
+      }
+
+      // 2. Trata ou cria o Idioma (se informado)
+      let idiomaConnect = undefined;
+      if (idioma) {
+        let idmExistente = await prisma.idioma.findFirst({
+          where: { nome: idioma }
+        });
+        if (!idmExistente) {
+          idmExistente = await prisma.idioma.create({
+            data: { nome: idioma }
+          });
+        }
+        idiomaConnect = { connect: { id: idmExistente.id } };
+      }
+
+      // 3. Atualiza o Exemplar no Banco
+      const exemplarAtualizado = await prisma.exemplar.update({
+        where: { id: id },
+        data: {
+          paginas: paginas ? Number(paginas) : null,
+          anoEdicao: anoEdicao ? Number(anoEdicao) : null,
+          isbn: isbn || undefined,
+          localizacao: localizacaoConnect,
+          idioma: idiomaConnect
+        },
+        include: {
+          localizacao: true,
+          idioma: true,
+          editora: true
+        }
       });
-      res.json(atualizado);
+
+      res.json(exemplarAtualizado);
     } catch (err) {
-      res.status(400).json({ erro: err.message });
+      console.error('Erro ao atualizar exemplar:', err);
+      res.status(500).json({ erro: err.message });
     }
   });
 
