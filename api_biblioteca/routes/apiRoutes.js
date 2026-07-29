@@ -421,13 +421,36 @@ router.delete('/exemplares/:id', async (req, res) => {
 // ==========================================
 
 function criarRotasCrud(entidade) {
-  // GET ALL
+  // GET ALL (Com suporte a Paginação)
   router.get(`/${entidade}s`, async (req, res) => {
     try {
-      const itens = await prisma[entidade].findMany({
-        include: includes[entidade] || undefined
+      // 1. Captura os query params com valores padrão (Página 1, 10 itens por página)
+      const pagina = parseInt(req.query.pagina) || 1;
+      const limite = parseInt(req.query.limite) || 10;
+
+      // 2. Calcula quantos registros deve pular
+      const skip = (pagina - 1) * limite;
+
+      // 3. Executa a busca paginada e a contagem total em paralelo
+      const [itens, totalItens] = await Promise.all([
+        prisma[entidade].findMany({
+          skip: skip,
+          take: limite,
+          include: includes[entidade] || undefined
+        }),
+        prisma[entidade].count()
+      ]);
+
+      // 4. Retorna a resposta com metadados úteis para o front-end
+      res.json({
+        dados: itens,
+        paginacao: {
+          totalItens,
+          paginaAtual: pagina,
+          itensPorPagina: limite,
+          totalPaginas: Math.ceil(totalItens / limite)
+        }
       });
-      res.json(itens);
     } catch (err) {
       res.status(500).json({ erro: err.message });
     }
