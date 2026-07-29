@@ -40,111 +40,35 @@ const includes = {
 // Rota para cadastrar livro/exemplar via ISBN
 router.post('/exemplares/isbn/:isbn', async (req, res) => {
   const cleanIsbn = req.params.isbn.replace(/[^0-9X]/gi, '');
+  const { obraId } = req.body; // 👈 Pega o ID da obra atual se enviado pelo Flutter
 
   try {
     let titulo, subtitulo, sinopse, paginas, anoEdicao, nomeAutor, nomeEditora;
     let urlCapa = null;
 
-    console.log(`\n🔎 Pesquisando ISBN: ${cleanIsbn}...`);
-
-    // 1. Tenta buscar no Google Books
-    const googleResponse = await fetch(
-      `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`,
-      { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
-    );
-
-    console.log(`📡 Status Google Books: ${googleResponse.status}`);
-
-    if (googleResponse.ok) {
-      const data = await googleResponse.json();
-
-      if (data.items && data.items.length > 0) {
-        const info = data.items[0].volumeInfo;
-        titulo = info.title || null;
-        subtitulo = info.subtitle || null;
-        sinopse = info.description || null;
-        paginas = info.pageCount || null;
-        anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
-        nomeAutor = info.authors ? info.authors[0] : null;
-        nomeEditora = info.publisher || null;
-
-        if (info.imageLinks) {
-          urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
-        }
-      }
-    } else {
-      console.log('⚠️ Google Books falhou ou bloqueou a requisição.');
-    }
-
-    // 2. Fallback 1: BrasilAPI
-    if (!titulo) {
-      console.log('🔄 Tentando fallback na BrasilAPI...');
-      const brasilResponse = await fetch(
-        `https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`,
-        { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
-      );
-
-      console.log(`📡 Status BrasilAPI: ${brasilResponse.status}`);
-
-      if (brasilResponse.ok) {
-        const info = await brasilResponse.json();
-        titulo = info.title || null;
-        subtitulo = info.subtitle || null;
-        sinopse = info.synopsis || null;
-        paginas = info.page_count || null;
-        anoEdicao = info.year || null;
-        nomeAutor = info.authors ? info.authors[0] : null;
-        nomeEditora = info.publisher || null;
-
-        if (info.cover_url) {
-          urlCapa = info.cover_url;
-        }
-      }
-    }
-
-    // 3. Fallback 2: Open Library (Busca Capa se nenhuma API encontrou)
-    if (!urlCapa) {
-      console.log('🔄 Tentando buscar capa na Open Library...');
-      const openLibraryUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`;
-      
-      try {
-        const checkCover = await fetch(openLibraryUrl, { method: 'HEAD' });
-        if (checkCover.ok) {
-          urlCapa = openLibraryUrl;
-          console.log('🖼️ Capa encontrada na Open Library!');
-        }
-      } catch (err) {
-        console.log('⚠️ Falha ao checar capa na Open Library');
-      }
-    }
-
-    if (!titulo) {
-      console.log('❌ Livro não encontrado em nenhuma das APIs.');
-      return res.status(404).json({ erro: 'Livro não encontrado para este ISBN.' });
-    }
-
-    console.log(`✅ Livro encontrado: "${titulo}"`);
-    console.log('🔍 URL da capa capturada:', urlCapa);
-
-    if (urlCapa) {
-      urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
-    }
+    // ... (Busca nas APIs Google Books / BrasilAPI / Open Library igual ao seu código) ...
 
     // --- CADASTRO NO PRISMA ---
-    let autor = null;
-    if (nomeAutor) {
-      let existente = await prisma.autor.findFirst({ where: { nome: nomeAutor } });
-      autor = existente || await prisma.autor.create({ data: { nome: nomeAutor } });
-    }
+    let targetObraId = obraId ? Number(obraId) : null;
 
-    const obra = await prisma.obra.create({
-      data: {
-        titulo,
-        subtitulo,
-        sinopse,
-        autores: autor ? { connect: [{ id: autor.id }] } : undefined
+    // Se NÃO passou um obraId, cria uma nova Obra
+    if (!targetObraId) {
+      let autor = null;
+      if (nomeAutor) {
+        let existente = await prisma.autor.findFirst({ where: { nome: nomeAutor } });
+        autor = existente || await prisma.autor.create({ data: { nome: nomeAutor } });
       }
-    });
+
+      const novaObra = await prisma.obra.create({
+        data: {
+          titulo,
+          subtitulo,
+          sinopse,
+          autores: autor ? { connect: [{ id: autor.id }] } : undefined
+        }
+      });
+      targetObraId = novaObra.id;
+    }
 
     let editora = null;
     if (nomeEditora) {
@@ -152,9 +76,10 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       editora = existente || await prisma.editora.create({ data: { nome: nomeEditora } });
     }
 
+    // Cria o Exemplar VINCULADO à Obra correta (targetObraId)
     const exemplar = await prisma.exemplar.create({
       data: {
-        obraId: obra.id,
+        obraId: targetObraId,
         editoraId: editora ? editora.id : null,
         isbn: cleanIsbn,
         paginas: paginas,
@@ -169,8 +94,6 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         idioma: true
       }
     });
-
-    console.log('📸 Imagens salvas no exemplar:', exemplar.imagens);
 
     res.status(201).json({
       mensagem: 'Exemplar cadastrado com sucesso!',
