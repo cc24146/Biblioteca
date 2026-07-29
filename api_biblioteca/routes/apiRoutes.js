@@ -175,6 +175,16 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
       nomeAutor = info.authors ? info.authors[0] : null;
       nomeEditora = info.publisher || null;
+
+      if (!urlCapa) {
+          const openLibraryUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`;
+          const checkCover = await fetch(openLibraryUrl, { method: 'HEAD' });
+          
+          // Se a imagem existir na Open Library (status 200)
+          if (checkCover.ok) {
+            urlCapa = openLibraryUrl;
+          }
+      }
       if (urlCapa) {
         urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
       }
