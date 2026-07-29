@@ -159,6 +159,15 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
 
     if (data.items && data.items.length > 0) {
       const info = data.items[0].volumeInfo;
+
+      if (info.imageLinks) {
+        urlCapa = 
+          info.imageLinks.thumbnail || 
+          info.imageLinks.smallThumbnail || 
+          info.imageLinks.medium || 
+          info.imageLinks.large || 
+          null;
+      }
       titulo = info.title || null;
       subtitulo = info.subtitle || null;
       sinopse = info.description || null;
@@ -166,7 +175,9 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
       nomeAutor = info.authors ? info.authors[0] : null;
       nomeEditora = info.publisher || null;
-      urlCapa = info.imageLinks.thumbnail.replace('http://', 'https://');
+      if (urlCapa) {
+        urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
+      }
     } else {
       // 3. Fallback: Se não achar no Google, tenta a BrasilAPI (ótima para livros nacionais)
       response = await fetch(`https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`);
@@ -179,6 +190,9 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         anoEdicao = info.year || null;
         nomeAutor = info.authors ? info.authors[0] : null;
         nomeEditora = info.publisher || null;
+        if (info.cover_url) {
+          urlCapa = info.cover_url.replace(/^http:\/\//i, 'https://');
+        }
       }
     }
 
