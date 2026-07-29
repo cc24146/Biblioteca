@@ -33,6 +33,26 @@ const includes = {
   exemplar: { obra: true, editora: true, idioma: true, localizacao: true, imagens: true }
 };
 
+function normalizarTexto(valor) {
+  if (valor === null || valor === undefined) return null;
+  if (typeof valor === 'string') {
+    const texto = valor.trim();
+    return texto || null;
+  }
+  const texto = String(valor).trim();
+  return texto || null;
+}
+
+function extrairCamposFaltantes({ titulo, nomeAutor, nomeEditora, paginas, anoEdicao }) {
+  const campos = [];
+  if (!titulo) campos.push('titulo');
+  if (!nomeAutor) campos.push('autor');
+  if (!nomeEditora) campos.push('editora');
+  if (!paginas) campos.push('paginas');
+  if (!anoEdicao) campos.push('anoEdicao');
+  return campos;
+}
+
 // ==========================================
 // 1. ROTAS CUSTOMIZADAS (Fora do Loop CRUD)
 // ==========================================
@@ -43,7 +63,13 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
   const { obraId } = req.body; // Pega o ID da obra atual se enviado pelo Flutter
 
   try {
-    let titulo, subtitulo, sinopse, paginas, anoEdicao, nomeAutor, nomeEditora;
+    let titulo = null;
+    let subtitulo = null;
+    let sinopse = null;
+    let paginas = null;
+    let anoEdicao = null;
+    let nomeAutor = null;
+    let nomeEditora = null;
     let urlCapa = null;
 
     console.log(`\n🔎 Pesquisando ISBN: ${cleanIsbn}...`);
@@ -61,15 +87,15 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
 
       if (data.items && data.items.length > 0) {
         const info = data.items[0].volumeInfo;
-        titulo = info.title || null;
-        subtitulo = info.subtitle || null;
-        sinopse = info.description || null;
-        paginas = info.pageCount || null;
-        anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
-        nomeAutor = info.authors ? info.authors[0] : null;
-        nomeEditora = info.publisher || null;
+        titulo = titulo || normalizarTexto(info.title);
+        subtitulo = subtitulo || normalizarTexto(info.subtitle);
+        sinopse = sinopse || normalizarTexto(info.description);
+        paginas = paginas ?? (info.pageCount ? Number(info.pageCount) : null);
+        anoEdicao = anoEdicao ?? (info.publishedDate ? Number(info.publishedDate.substring(0, 4)) : null);
+        nomeAutor = nomeAutor || (info.authors && info.authors.length > 0 ? normalizarTexto(info.authors[0]) : null);
+        nomeEditora = nomeEditora || normalizarTexto(info.publisher);
 
-        if (info.imageLinks) {
+        if (!urlCapa && info.imageLinks) {
           urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
         }
       }
@@ -89,33 +115,60 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
 
       if (brasilResponse.ok) {
         const info = await brasilResponse.json();
-        titulo = info.title || null;
-        subtitulo = info.subtitle || null;
-        sinopse = info.synopsis || null;
-        paginas = info.page_count || null;
-        anoEdicao = info.year || null;
-        nomeAutor = info.authors ? info.authors[0] : null;
-        nomeEditora = info.publisher || null;
+        titulo = titulo || normalizarTexto(info.title);
+        subtitulo = subtitulo || normalizarTexto(info.subtitle);
+        sinopse = sinopse || normalizarTexto(info.synopsis);
+        paginas = paginas ?? (info.page_count ? Number(info.page_count) : null);
+        anoEdicao = anoEdicao ?? (info.year ? Number(info.year) : null);
+        nomeAutor = nomeAutor || (info.authors && info.authors.length > 0 ? normalizarTexto(info.authors[0]) : null);
+        nomeEditora = nomeEditora || normalizarTexto(info.publisher);
 
-        if (info.cover_url) {
+        if (!urlCapa && info.cover_url) {
           urlCapa = info.cover_url;
         }
       }
     }
 
-    // 3. Fallback 2: Open Library (Busca Capa se nenhuma API encontrou)
-    if (!urlCapa) {
-      console.log('Tentando buscar capa na Open Library...');
-      const openLibraryUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`;
-      
+    // 3. Fallback 2: Open Library (preenche metadados e capa se ainda faltarem)
+    if (!titulo || !subtitulo || !sinopse || !paginas || !anoEdicao || !nomeAutor || !nomeEditora || !urlCapa) {
+      console.log('Tentando fallback final na Open Library...');
+      const openLibraryUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${cleanIsbn}&jscmd=data&format=json`;
+
       try {
-        const checkCover = await fetch(openLibraryUrl, { method: 'HEAD' });
-        if (checkCover.ok) {
-          urlCapa = openLibraryUrl;
-          console.log('Capa encontrada na Open Library!');
+        const openLibraryResponse = await fetch(openLibraryUrl, { headers: { 'User-Agent': 'BibliotecaApp/1.0' } });
+
+        if (openLibraryResponse.ok) {
+          const openLibraryData = await openLibraryResponse.json();
+          const livroOpenLibrary = openLibraryData[`ISBN:${cleanIsbn}`];
+
+          if (livroOpenLibrary) {
+            titulo = titulo || normalizarTexto(livroOpenLibrary.title);
+            subtitulo = subtitulo || normalizarTexto(livroOpenLibrary.subtitle);
+
+            if (typeof livroOpenLibrary.description === 'string') {
+              sinopse = sinopse || normalizarTexto(livroOpenLibrary.description);
+            } else if (livroOpenLibrary.description && typeof livroOpenLibrary.description === 'object') {
+              sinopse = sinopse || normalizarTexto(livroOpenLibrary.description.value);
+            }
+
+            paginas = paginas ?? (livroOpenLibrary.number_of_pages ? Number(livroOpenLibrary.number_of_pages) : null);
+            anoEdicao = anoEdicao ?? (livroOpenLibrary.publish_date ? Number(livroOpenLibrary.publish_date.substring(0, 4)) : null);
+            nomeAutor = nomeAutor || (Array.isArray(livroOpenLibrary.authors) && livroOpenLibrary.authors.length > 0 ? normalizarTexto(livroOpenLibrary.authors[0].name) : null);
+            nomeEditora = nomeEditora || (Array.isArray(livroOpenLibrary.publishers) && livroOpenLibrary.publishers.length > 0 ? normalizarTexto(livroOpenLibrary.publishers[0].name || livroOpenLibrary.publishers[0]) : null);
+
+            if (!urlCapa) {
+              if (Array.isArray(livroOpenLibrary.covers) && livroOpenLibrary.covers.length > 0) {
+                urlCapa = `https://covers.openlibrary.org/b/id/${livroOpenLibrary.covers[0]}-L.jpg`;
+              } else if (livroOpenLibrary.cover && (livroOpenLibrary.cover.medium || livroOpenLibrary.cover.large || livroOpenLibrary.cover.small)) {
+                urlCapa = livroOpenLibrary.cover.medium || livroOpenLibrary.cover.large || livroOpenLibrary.cover.small;
+              }
+            }
+
+            console.log('Metadados preenchidos pela Open Library.');
+          }
         }
       } catch (err) {
-        console.log('Falha ao checar capa na Open Library');
+        console.log('Falha ao consultar a Open Library para os dados do livro');
       }
     }
 
@@ -131,6 +184,14 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
     }
 
+    const camposFaltantes = extrairCamposFaltantes({
+      titulo,
+      nomeAutor,
+      nomeEditora,
+      paginas,
+      anoEdicao
+    });
+
     // --- CADASTRO NO PRISMA ---
     let targetObraId = obraId ? Number(obraId) : null;
 
@@ -142,12 +203,11 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         autor = existente || await prisma.autor.create({ data: { nome: nomeAutor } });
       }
 
-      // 🔴 GARANTIA DE TÍTULO: Evita enviar undefined para o Prisma
       const tituloFinal = titulo || `Livro ISBN ${cleanIsbn}`;
 
       const novaObra = await prisma.obra.create({
         data: {
-          titulo: tituloFinal, // 👈 Agora nunca será undefined
+          titulo: tituloFinal,
           subtitulo: subtitulo || null,
           sinopse: sinopse || null,
           autores: autor ? { connect: [{ id: autor.id }] } : undefined
@@ -155,6 +215,11 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       });
       targetObraId = novaObra.id;
     }
+
+    const obraResposta = await prisma.obra.findUnique({
+      where: { id: targetObraId },
+      include: { autores: true }
+    });
 
     let editora = null;
     if (nomeEditora) {
@@ -184,6 +249,8 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
 
     res.status(201).json({
       mensagem: 'Exemplar cadastrado com sucesso!',
+      camposFaltantes,
+      obra: obraResposta,
       exemplar
     });
 
