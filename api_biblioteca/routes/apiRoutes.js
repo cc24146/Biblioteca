@@ -28,11 +28,12 @@ function criarRotasCrud(entidade) {
       include: {
         editora: true,
         idioma: true,
-        localizacao: true
+        localizacao: true,
+        imagens: true
       }
     } 
   },
-  exemplar: { obra: true, editora: true, idioma: true, localizacao: true }
+  exemplar: { obra: true, editora: true, idioma: true, localizacao: true, imagens: true }
 };
 
   // GET ALL - Listar todos
@@ -154,6 +155,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
     // 2. Tenta buscar no Google Books
     let response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`);
     let data = await response.json();
+    let urlCapa = null;
 
     if (data.items && data.items.length > 0) {
       const info = data.items[0].volumeInfo;
@@ -164,6 +166,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
       nomeAutor = info.authors ? info.authors[0] : null;
       nomeEditora = info.publisher || null;
+      urlCapa = info.imageLinks.thumbnail.replace('http://', 'https://');
     } else {
       // 3. Fallback: Se não achar no Google, tenta a BrasilAPI (ótima para livros nacionais)
       response = await fetch(`https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`);
@@ -216,7 +219,13 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         editoraId: editora ? editora.id : null,
         isbn: cleanIsbn,
         paginas: paginas,
-        anoEdicao: anoEdicao
+        anoEdicao: anoEdicao,
+        imagens: urlCapa 
+      ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
+      : undefined
+      },
+      include: {
+        imagens: true
       }
     });
 
