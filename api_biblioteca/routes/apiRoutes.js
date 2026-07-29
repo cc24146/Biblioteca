@@ -460,6 +460,96 @@ function criarRotasCrud(entidade) {
     }
   });
 
+  router.post('/exemplares/manual', async (req, res) => {
+  const { 
+    obraId, 
+    tituloEdicao, 
+    isbn, 
+    paginas, 
+    anoEdicao, 
+    nomeEditora, 
+    localizacao, 
+    idioma, 
+    urlCapa 
+  } = req.body;
+
+  try {
+    let targetObraId = obraId ? Number(obraId) : null;
+
+    // 1. Se não recebeu um obraId, cria a Obra básica com o título da edição
+    if (!targetObraId) {
+      const novaObra = await prisma.obra.create({
+        data: {
+          titulo: tituloEdicao || 'Obra sem título',
+        }
+      });
+      targetObraId = novaObra.id;
+    }
+
+    // 2. Trata / Conecta a Editora (busca ou cria)
+    let editoraConnect = undefined;
+    if (nomeEditora) {
+      let edExistente = await prisma.editora.findFirst({ where: { nome: nomeEditora } });
+      if (!edExistente) {
+        edExistente = await prisma.editora.create({ data: { nome: nomeEditora } });
+      }
+      editoraConnect = { connect: { id: edExistente.id } };
+    }
+
+    // 3. Trata / Conecta a Localização
+    let localizacaoConnect = undefined;
+    if (localizacao) {
+      let locExistente = await prisma.localizacao.findFirst({ where: { descricao: localizacao } });
+      if (!locExistente) {
+        locExistente = await prisma.localizacao.create({ data: { descricao: localizacao } });
+      }
+      localizacaoConnect = { connect: { id: locExistente.id } };
+    }
+
+    // 4. Trata / Conecta o Idioma
+    let idiomaConnect = undefined;
+    if (idioma) {
+      let idmExistente = await prisma.idioma.findFirst({ where: { nome: idioma } });
+      if (!idmExistente) {
+        idmExistente = await prisma.idioma.create({ data: { nome: idioma } });
+      }
+      idiomaConnect = { connect: { id: idmExistente.id } };
+    }
+
+    // 5. Cria o Exemplar vinculado à Obra e com as relações tratadas
+    const exemplar = await prisma.exemplar.create({
+      data: {
+        obraId: targetObraId,
+        tituloEdicao: tituloEdicao || null,
+        isbn: isbn || null,
+        paginas: paginas ? Number(paginas) : null,
+        anoEdicao: anoEdicao ? Number(anoEdicao) : null,
+        editora: editoraConnect,
+        localizacao: localizacaoConnect,
+        idioma: idiomaConnect,
+        imagens: urlCapa 
+          ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
+          : undefined
+      },
+      include: {
+        editora: true,
+        localizacao: true,
+        idioma: true,
+        imagens: true
+      }
+    });
+
+    res.status(201).json({
+      mensagem: 'Exemplar manual cadastrado com sucesso!',
+      exemplar
+    });
+
+  } catch (err) {
+    console.error('❌ Erro ao cadastrar exemplar manual:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
   // GET BY ID
   router.get(`/${entidade}s/:id`, async (req, res) => {
     try {
