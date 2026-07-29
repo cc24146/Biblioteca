@@ -247,6 +247,59 @@ router.put('/exemplares/:id', async (req, res) => {
   }
 });
 
+// Rota para atualizar os dados da Obra (Título, Subtítulo, Sinopse, Autores)
+router.put('/obras/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const { titulo, subtitulo, sinopse, autores } = req.body;
+
+  try {
+    // Processa a lista de autores se for enviada em texto separado por vírgula
+    let autoresConnect = undefined;
+    if (autores && typeof autores === 'string') {
+      const nomesAutores = autores.split(',').map(a => a.trim()).filter(a => a.length > 0);
+      
+      const autoresIds = await Promise.all(
+        nomesAutores.map(async (nome) => {
+          let existente = await prisma.autor.findFirst({ where: { nome } });
+          if (!existente) {
+            existente = await prisma.autor.create({ data: { nome } });
+          }
+          return { id: existente.id };
+        })
+      );
+
+      autoresConnect = {
+        set: autoresIds // Sobrescreve as conexões antigas com os novos autores
+      };
+    }
+
+    const obraAtualizada = await prisma.obra.update({
+      where: { id },
+      data: {
+        titulo: titulo || undefined,
+        subtitulo: subtitulo !== undefined ? subtitulo : undefined,
+        sinopse: sinopse !== undefined ? sinopse : undefined,
+        autores: autoresConnect,
+      },
+      include: {
+        autores: true,
+        exemplares: {
+          include: {
+            localizacao: true,
+            idioma: true,
+            imagens: true,
+          },
+        },
+      },
+    });
+
+    res.json(obraAtualizada);
+  } catch (err) {
+    console.error('Erro ao atualizar obra:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ==========================================
 // 2. FUNÇÃO E GERADOR DE ROTAS GENÉRICAS (CRUD)
 // ==========================================
