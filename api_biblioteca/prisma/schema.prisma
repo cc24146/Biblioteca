@@ -1,0 +1,106 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Usuario {
+  id        Int        @id @default(autoincrement())
+  nome      String
+  email     String     @unique
+  senha     String
+  exemplares Exemplar[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Autor {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  biografia String?
+  obras     Obra[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Editora {
+  id         Int        @id @default(autoincrement())
+  nome       String
+  exemplares Exemplar[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model Genero {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  obras     Obra[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Idioma {
+  id         Int        @id @default(autoincrement())
+  nome       String
+  sigla      String?
+  exemplares Exemplar[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model Localizacao {
+  id         Int        @id @default(autoincrement())
+  descricao  String
+  detalhes   String?
+  exemplares Exemplar[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model Imagem {
+  id         Int        @id @default(autoincrement())
+  url        String
+  descricao  String?
+  obras      Obra[]
+  exemplares Exemplar[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model Obra {
+  id         Int        @id @default(autoincrement())
+  titulo     String
+  subtitulo  String?
+  sinopse    String?
+  capaId     Int?
+  capa       Imagem?    @relation(fields: [capaId], references: [id])
+  autores    Autor[]
+  generos    Genero[]
+  exemplares Exemplar[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model Exemplar {
+  id                Int          @id @default(autoincrement())
+  obraId            Int
+  obra              Obra         @relation(fields: [obraId], references: [id])
+  editoraId         Int?
+  editora           Editora?     @relation(fields: [editoraId], references: [id])
+  idiomaId          Int?
+  idioma            Idioma?      @relation(fields: [idiomaId], references: [id])
+  localizacaoId     Int?
+  localizacao       Localizacao? @relation(fields: [localizacaoId], references: [id])
+  proprietarioId    Int?
+  proprietario      Usuario?     @relation(fields: [proprietarioId], references: [id])
+  imagens           Imagem[]
+  anoEdicao         Int?
+  isbn              String?
+  paginas           Int?
+  estadoConservacao String       @default("Bom")
+  lido              Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
