@@ -462,16 +462,16 @@ function criarRotasCrud(entidade) {
 
   router.post('/exemplares/manual', async (req, res) => {
   const { 
-    obraId, 
-    tituloEdicao, 
-    isbn, 
-    paginas, 
-    anoEdicao, 
-    nomeEditora, 
-    localizacao, 
-    idioma, 
-    urlCapa 
-  } = req.body;
+  targetObraId, 
+  tituloEdicao, 
+  isbn, 
+  paginas, 
+  anoEdicao, 
+  editoraId,      
+  localizacaoId, 
+  idiomaId, 
+  urlCapa 
+} = req.body;
 
   try {
     let targetObraId = obraId ? Number(obraId) : null;
