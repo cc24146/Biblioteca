@@ -524,9 +524,10 @@ function criarRotasCrud(entidade) {
         isbn: isbn || null,
         paginas: paginas ? Number(paginas) : null,
         anoEdicao: anoEdicao ? Number(anoEdicao) : null,
-        editora: editoraConnect,
-        localizacao: localizacaoConnect,
-        idioma: idiomaConnect,
+        editoraId: editoraId ? Number(editoraId) : null,
+        localizacaoId: localizacaoId ? Number(localizacaoId) : null,
+        idiomaId: idiomaId ? Number(idiomaId) : null,
+
         imagens: urlCapa 
           ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
           : undefined
@@ -538,7 +539,6 @@ function criarRotasCrud(entidade) {
         imagens: true
       }
     });
-
     res.status(201).json({
       mensagem: 'Exemplar manual cadastrado com sucesso!',
       exemplar
