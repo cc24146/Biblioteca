@@ -146,28 +146,18 @@ function criarRotasCrud(entidade) {
   });
 
 router.post('/exemplares/isbn/:isbn', async (req, res) => {
-  // 1. Remove hífens, espaços e caracteres especiais do ISBN
   const cleanIsbn = req.params.isbn.replace(/[^0-9X]/gi, '');
 
   try {
     let titulo, subtitulo, sinopse, paginas, anoEdicao, nomeAutor, nomeEditora;
+    let urlCapa = null; // 👈 DECLARADA NO ESCOPO PRINCIPAL
 
-    // 2. Tenta buscar no Google Books
-    let response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`);
-    let data = await response.json();
-    let urlCapa = null;
+    // 1. Consulta Google Books
+    const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`);
+    const data = await response.json();
 
     if (data.items && data.items.length > 0) {
       const info = data.items[0].volumeInfo;
-
-      if (info.imageLinks) {
-        urlCapa = 
-          info.imageLinks.thumbnail || 
-          info.imageLinks.smallThumbnail || 
-          info.imageLinks.medium || 
-          info.imageLinks.large || 
-          null;
-      }
       titulo = info.title || null;
       subtitulo = info.subtitle || null;
       sinopse = info.description || null;
@@ -176,67 +166,52 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
       nomeAutor = info.authors ? info.authors[0] : null;
       nomeEditora = info.publisher || null;
 
-      if (!urlCapa) {
-          const openLibraryUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`;
-          const checkCover = await fetch(openLibraryUrl, { method: 'HEAD' });
-          
-          // Se a imagem existir na Open Library (status 200)
-          if (checkCover.ok) {
-            urlCapa = openLibraryUrl;
-          }
+      // 🔍 Tenta pegar a imagem de qualquer tamanho disponível
+      if (info.imageLinks) {
+        urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
       }
-      if (urlCapa) {
-        urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
-      }
-    } else {
-      // 3. Fallback: Se não achar no Google, tenta a BrasilAPI (ótima para livros nacionais)
-      response = await fetch(`https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`);
-      if (response.ok) {
-        const info = await response.json();
-        titulo = info.title || null;
-        subtitulo = info.subtitle || null;
-        sinopse = info.synopsis || null;
-        paginas = info.page_count || null;
-        anoEdicao = info.year || null;
-        nomeAutor = info.authors ? info.authors[0] : null;
-        nomeEditora = info.publisher || null;
-        if (info.cover_url) {
-          urlCapa = info.cover_url.replace(/^http:\/\//i, 'https://');
-        }
-      }
+    }
+
+    // 💡 LOG DE DEPURACAO 1: Mostra se o Google enviou o link
+    console.log('🔍 Link bruto capturado da API:', urlCapa);
+
+    // Garante protocolo HTTPS para o Flutter conseguir carregar
+    if (urlCapa) {
+      urlCapa = urlCapa.replace('http://', 'https://');
     }
 
     if (!titulo) {
-      return res.status(404).json({ erro: 'Livro não encontrado em nenhuma das bases para este ISBN.' });
+      return res.status(404).json({ erro: 'Livro não encontrado para este ISBN.' });
     }
 
-    // --- MANTÉM O RESTANTE DO CÓDIGO DE CADASTRO NO PRISMA AQUI ---
-    
-    // Cadastra Autor
+    // --- Cadastra Autor ---
     let autor = null;
     if (nomeAutor) {
       let existente = await prisma.autor.findFirst({ where: { nome: nomeAutor } });
       autor = existente || await prisma.autor.create({ data: { nome: nomeAutor } });
     }
 
-    // Cadastra Obra
+    // --- Cadastra Obra ---
     const obra = await prisma.obra.create({
       data: {
-        titulo: titulo,
+        titulo,
         subtitulo,
         sinopse,
         autores: autor ? { connect: [{ id: autor.id }] } : undefined
       }
     });
 
-    // Cadastra Editora
+    // --- Cadastra Editora ---
     let editora = null;
     if (nomeEditora) {
       let existente = await prisma.editora.findFirst({ where: { nome: nomeEditora } });
       editora = existente || await prisma.editora.create({ data: { nome: nomeEditora } });
     }
 
-    // Cadastra Exemplar
+    // 💡 LOG DE DEPURACAO 2: Checa a variável antes do Prisma
+    console.log('🔍 URL pronta para salvar no Prisma:', urlCapa);
+
+    // --- Cadastra Exemplar e Imagem ---
     const exemplar = await prisma.exemplar.create({
       data: {
         obraId: obra.id,
@@ -244,45 +219,27 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         isbn: cleanIsbn,
         paginas: paginas,
         anoEdicao: anoEdicao,
+        // Cria o registro na tabela Imagem vinculada ao Exemplar
         imagens: urlCapa 
-      ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
-      : undefined
+          ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
+          : undefined
       },
       include: {
-        imagens: true
+        imagens: true,
+        localizacao: true,
+        idioma: true
       }
-      
     });
 
-    // Checagem dos campos faltantes
-    const camposFaltantes = [];
-    if (!subtitulo) camposFaltantes.push('Subtítulo');
-    if (!sinopse) camposFaltantes.push('Sinopse');
-    if (!paginas) camposFaltantes.push('Páginas');
-    if (!anoEdicao) camposFaltantes.push('Ano de Edição');
-    if (!editora) camposFaltantes.push('Editora');
-    if (!autor) camposFaltantes.push('Autor');
-    if (!exemplar.localizacaoId) camposFaltantes.push('Localização');
-    if (!exemplar.idiomaId) camposFaltantes.push('Idioma');
-
     console.log('📸 Imagem salva no exemplar:', exemplar.imagens);
-    console.log('\n----------------------------------------');
-    console.log(`📚 Livro cadastrado via ISBN: "${obra.titulo}"`);
-    if (camposFaltantes.length > 0) {
-      console.log('⚠️  Atenção! Os seguintes campos não foram encontrados e precisam ser preenchidos manualmente:');
-      camposFaltantes.forEach(campo => console.log(`   - ${campo}`));
-    } else {
-      console.log('✅ Todos os dados principais foram preenchidos com sucesso!');
-    }
-    console.log('----------------------------------------\n');
 
     res.status(201).json({
       mensagem: 'Exemplar cadastrado com sucesso!',
-      exemplar,
-      camposFaltantes
+      exemplar
     });
 
   } catch (err) {
+    console.error('❌ Erro no cadastro:', err);
     res.status(500).json({ erro: err.message });
   }
 });
