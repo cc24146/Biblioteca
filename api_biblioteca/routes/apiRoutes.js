@@ -258,6 +258,28 @@ router.put('/exemplares/:id', async (req, res) => {
   }
 });
 
+// Rota para deletar uma Obra (e seus exemplares vinculados) pelo ID
+router.delete('/obras/:id', async (req, res) => {
+  const id = Number(req.params.id);
+
+  try {
+    // 1. Opcional: deletar dependências manuais caso o seu banco não utilize onDelete: Cascade no Prisma
+    await prisma.exemplar.deleteMany({
+      where: { obraId: id },
+    });
+
+    // 2. Deleta a Obra
+    await prisma.obra.delete({
+      where: { id: id },
+    });
+
+    res.json({ mensagem: 'Obra excluída com sucesso!' });
+  } catch (err) {
+    console.error('Erro ao excluir obra:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Rota para atualizar os dados da Obra (Título, Subtítulo, Sinopse, Autores)
 router.put('/obras/:id', async (req, res) => {
   const id = Number(req.params.id);
