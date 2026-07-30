@@ -465,17 +465,17 @@ router.put('/exemplares/:id', async (req, res) => {
 });
 
 // GET /obras
+// GET /obras - Retorna as obras com TODOS os seus exemplares
 router.get('/obras', async (req, res) => {
   try {
-    const { termo, localizacao, pagina = 1, limite = 50, ordenarPor } = req.query;
+    const { termo, pagina = 1, limite = 50, ordenarPor } = req.query;
     
     const pageNum = parseInt(pagina);
     const limitNum = parseInt(limite);
     const skip = (pageNum - 1) * limitNum;
 
-    // Filtro principal da Obra
+    // Filtro apenas por termo de busca (título/autor)
     const where = {};
-
     if (termo && termo.trim() !== '') {
       where.OR = [
         { titulo: { contains: termo, mode: 'insensitive' } },
@@ -483,72 +483,42 @@ router.get('/obras', async (req, res) => {
       ];
     }
 
-    const temFiltroLocalizacao = localizacao && localizacao.trim() !== '';
-
-    // Se houver filtro de localização, garante que a obra possui ao menos 1 exemplar nela
-    if (temFiltroLocalizacao) {
-      where.exemplares = {
-        some: {
-          localizacao: {
-            descricao: { equals: localizacao.trim(), mode: 'insensitive' }
-          }
-        }
-      };
-    }
-
     let orderBy = { titulo: 'asc' };
     if (ordenarPor === 'autor') {
       orderBy = { autores: { _count: 'desc' } };
     }
 
-    // Busca as obras com os exemplares filtrados
-    let obras = await prisma.obra.findMany({
-      where,
-      skip,
-      take: limitNum,
-      orderBy,
-      include: {
-        autores: true,
-        generos: true,
-        capa: true,
-        exemplares: {
-          // AQUI ESTÁ O SEGREDO: Se houver filtro de localização,
-          // traz APENAS os exemplares dessa localização!
-          where: temFiltroLocalizacao ? {
-            localizacao: {
-              descricao: { equals: localizacao.trim(), mode: 'insensitive' }
-            }
-          } : undefined,
-          include: { localizacao: true, editora: true, idioma: true }
+    // Busca no Prisma sem filtrar a lista interna de exemplares
+    const [obras, total] = await Promise.all([
+      prisma.obra.findMany({
+        where,
+        skip,
+        take: limitNum,
+        orderBy,
+        include: {
+          autores: true,
+          generos: true,
+          capa: true,
+          exemplares: {
+            include: { localizacao: true, editora: true, idioma: true }
+          }
         }
-      }
-    });
-
-    // Remove qualquer obra caso ela venha sem exemplares (garantia extra)
-    if (temFiltroLocalizacao) {
-      obras = obras.filter(obra => obra.exemplares && obra.exemplares.length > 0);
-    }
-
-    // Total de registros para a paginação
-    const total = await prisma.obra.count({ where });
-
-    // Soma do total de exemplares retornados nesta página
-    const totalExemplares = obras.reduce((acc, item) => acc + (item.exemplares?.length || 0), 0);
+      }),
+      prisma.obra.count({ where })
+    ]);
 
     res.json({
       dados: obras,
       paginacao: {
         total,
         pagina: pageNum,
-        limite: limitNum,
-        totalExemplares
+        limite: limitNum
       }
     });
   } catch (err) {
     res.status(500).json({ erro: err.message });
   }
 });
-
 // Rota para atualizar os dados da Obra (Título, Subtítulo, Sinopse, Autores)
 router.put('/obras/:id', async (req, res) => {
   const id = Number(req.params.id);
