@@ -50,6 +50,10 @@ function obterSobrenomeOrdenacao(nomeAutor) {
   const partes = semAcento.trim().split(/\s+/);
   return (partes[partes.length - 1] || '').toLowerCase();
 }
+function normalizarLocalizacao(valor) {
+  if (!valor) return null;
+  return valor.normalize('NFC').trim().replace(/\s+/g, ' ');
+}
 
 // Recalcula e salva o campo de ordenação de uma obra específica
 async function atualizarOrdenacaoAutor(obraId) {
@@ -271,6 +275,29 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
   }
 });
 
+// Cria uma localização evitando duplicatas (usado pelo botão "Criar Localização" do app)
+router.post('/localizacoes', async (req, res) => {
+  try {
+    const nomeNormalizado = normalizarLocalizacao(req.body.descricao);
+    if (!nomeNormalizado) {
+      return res.status(400).json({ erro: 'Descrição da localização é obrigatória.' });
+    }
+
+    let loc = await prisma.localizacao.findFirst({
+      where: { descricao: { equals: nomeNormalizado, mode: 'insensitive' } }
+    });
+
+    if (!loc) {
+      loc = await prisma.localizacao.create({ data: { descricao: nomeNormalizado } });
+    }
+
+    res.status(201).json(loc);
+  } catch (err) {
+    console.error('Erro ao criar localização:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Rota para Cadastro Manual de Exemplar
 router.post('/exemplares/manual', async (req, res) => {
   const { 
@@ -318,9 +345,12 @@ router.post('/exemplares/manual', async (req, res) => {
     // 3. Trata / Resolve Localização
     let finalLocalizacaoId = localizacaoId ? Number(localizacaoId) : null;
     if (!finalLocalizacaoId && localizacao) {
-      let locExistente = await prisma.localizacao.findFirst({ where: { descricao: localizacao } });
+      const nomeNormalizado = normalizarLocalizacao(localizacao);
+      let locExistente = await prisma.localizacao.findFirst({
+        where: { descricao: { equals: nomeNormalizado, mode: 'insensitive' } }
+      });
       if (!locExistente) {
-        locExistente = await prisma.localizacao.create({ data: { descricao: localizacao } });
+        locExistente = await prisma.localizacao.create({ data: { descricao: nomeNormalizado } });
       }
       finalLocalizacaoId = locExistente.id;
     }
@@ -378,13 +408,12 @@ router.put('/exemplares/:id', async (req, res) => {
   try {
     let finalLocalizacaoId = undefined;
     if (localizacao) {
+      const nomeNormalizado = normalizarLocalizacao(localizacao);
       let locExistente = await prisma.localizacao.findFirst({
-        where: { descricao: localizacao }
+        where: { descricao: { equals: nomeNormalizado, mode: 'insensitive' } }
       });
       if (!locExistente) {
-        locExistente = await prisma.localizacao.create({
-          data: { descricao: localizacao }
-        });
+        locExistente = await prisma.localizacao.create({ data: { descricao: nomeNormalizado } });
       }
       finalLocalizacaoId = locExistente.id;
     }
@@ -522,24 +551,6 @@ router.delete('/exemplares/:id', async (req, res) => {
 });
 
 // Rota para excluir uma Localização pelo nome (usada pelo painel de filtros do app)
-router.delete('/localizacoes/por-nome/:nome', async (req, res) => {
-  try {
-    const nome = decodeURIComponent(req.params.nome).trim();
-    const loc = await prisma.localizacao.findFirst({
-      where: { descricao: { equals: nome, mode: 'insensitive' } }
-    });
-
-    if (!loc) {
-      return res.status(404).json({ erro: 'Localização não encontrada.' });
-    }
-
-    await prisma.localizacao.delete({ where: { id: loc.id } });
-    res.json({ mensagem: 'Localização excluída com sucesso.' });
-  } catch (err) {
-    console.error('Erro ao excluir localização:', err);
-    res.status(500).json({ erro: err.message });
-  }
-});
 
 // ==========================================
 // 2. FUNÇÃO E GERADOR DE ROTAS GENÉRICAS (CRUD)
