@@ -507,8 +507,8 @@ function criarRotasCrud(entidade) {
     const limite = parseInt(req.query.limite) || 10;
     const skip = (pagina - 1) * limite;
     const termo = req.query.termo ? String(req.query.termo).trim() : null;
+    const ordenarPor = req.query.ordenarPor || 'titulo';
 
-    // Filtro de busca — só aplica para 'obra' por enquanto
     let where = undefined;
     if (termo && entidade === 'obra') {
       where = {
@@ -520,32 +520,28 @@ function criarRotasCrud(entidade) {
       };
     }
 
+    let orderBy = undefined;
+    if (entidade === 'obra') {
+      // 'titulo' tem coluna direta pra ordenar no banco.
+      // 'autor' não dá pra ordenar direito no banco sem uma coluna dedicada
+      // (autores é relação N:N) — por enquanto cai pra ordenar por id,
+      // e o cliente reordena só dentro da página já carregada.
+      orderBy = ordenarPor === 'titulo' ? { titulo: 'asc' } : { id: 'asc' };
+    }
+
     const [itens, totalItens] = await Promise.all([
-      prisma[entidade].findMany({
-        where,
-        skip,
-        take: limite,
-        include: includes[entidade] || undefined
-      }),
+      prisma[entidade].findMany({ where, orderBy, skip, take: limite, include: includes[entidade] || undefined }),
       prisma[entidade].count({ where })
     ]);
 
     let totalExemplares = null;
     if (entidade === 'obra') {
-      totalExemplares = await prisma.exemplar.count({
-        where: where ? { obra: where } : undefined
-      });
+      totalExemplares = await prisma.exemplar.count({ where: where ? { obra: where } : undefined });
     }
 
     res.json({
       dados: itens,
-      paginacao: {
-        totalItens,
-        totalExemplares: totalExemplares ?? totalItens,
-        paginaAtual: pagina,
-        itensPorPagina: limite,
-        totalPaginas: Math.ceil(totalItens / limite)
-      }
+      paginacao: { totalItens, totalExemplares: totalExemplares ?? totalItens, paginaAtual: pagina, itensPorPagina: limite, totalPaginas: Math.ceil(totalItens / limite) }
     });
   } catch (err) {
     res.status(500).json({ erro: err.message });
