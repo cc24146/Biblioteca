@@ -89,48 +89,126 @@ function extrairCamposFaltantes({ titulo, nomeAutor, nomeEditora, paginas, anoEd
 
 // Rota para cadastrar livro/exemplar via ISBN
 router.post('/exemplares/isbn/:isbn', async (req, res) => {
-  // 1. Extrai parâmetros do corpo e limpa o ISBN
   const cleanIsbn = req.params.isbn.replace(/[^0-9X]/gi, '');
-  const { obraId, localizacaoId } = req.body;
+  const { obraId } = req.body;
 
   try {
-    let titulo, subtitulo, sinopse, paginas, anoEdicao, nomeAutor, nomeEditora;
+    let titulo = null;
+    let subtitulo = null;
+    let sinopse = null;
+    let paginas = null;
+    let anoEdicao = null;
+    let nomeAutor = null;
+    let nomeEditora = null;
+    let urlCapa = null;
 
-    // 2. Tenta buscar no Google Books
-    let response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`);
-    let data = await response.json();
+    console.log(`\n🔎 Pesquisando ISBN: ${cleanIsbn}...`);
 
-    if (data.items && data.items.length > 0) {
-      const info = data.items[0].volumeInfo;
-      titulo = info.title || null;
-      subtitulo = info.subtitle || null;
-      sinopse = info.description || null;
-      paginas = info.pageCount || null;
-      anoEdicao = info.publishedDate ? parseInt(info.publishedDate.substring(0, 4)) : null;
-      nomeAutor = info.authors ? info.authors[0] : null;
-      nomeEditora = info.publisher || null;
-    } else {
-      // 3. Fallback: BrasilAPI
-      response = await fetch(`https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`);
-      if (response.ok) {
-        const info = await response.json();
-        titulo = info.title || null;
-        subtitulo = info.subtitle || null;
-        sinopse = info.synopsis || null;
-        paginas = info.page_count || null;
-        anoEdicao = info.year || null;
-        nomeAutor = info.authors ? info.authors[0] : null;
-        nomeEditora = info.publisher || null;
+    // 1. Tenta buscar no Google Books
+    const googleResponse = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`,
+      { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
+    );
+
+    if (googleResponse.ok) {
+      const data = await googleResponse.json();
+
+      if (data.items && data.items.length > 0) {
+        const info = data.items[0].volumeInfo;
+        titulo = titulo || normalizarTexto(info.title);
+        subtitulo = subtitulo || normalizarTexto(info.subtitle);
+        sinopse = sinopse || normalizarTexto(info.description);
+        paginas = paginas ?? (info.pageCount ? Number(info.pageCount) : null);
+        anoEdicao = anoEdicao ?? (info.publishedDate ? Number(info.publishedDate.substring(0, 4)) : null);
+        nomeAutor = nomeAutor || (info.authors && info.authors.length > 0 ? normalizarTexto(info.authors[0]) : null);
+        nomeEditora = nomeEditora || normalizarTexto(info.publisher);
+
+        if (!urlCapa && info.imageLinks) {
+          urlCapa = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || null;
+        }
       }
     }
 
-    if (!titulo && !obraId) {
-      return res.status(404).json({ erro: 'Livro não encontrado em nenhuma das bases para este ISBN.' });
+    // 2. Fallback 1: BrasilAPI
+    if (!titulo) {
+      const brasilResponse = await fetch(
+        `https://brasilapi.com.br/api/isbn/v1/${cleanIsbn}`,
+        { headers: { 'User-Agent': 'BibliotecaApp/1.0' } }
+      );
+
+      if (brasilResponse.ok) {
+        const info = await brasilResponse.json();
+        titulo = titulo || normalizarTexto(info.title);
+        subtitulo = subtitulo || normalizarTexto(info.subtitle);
+        sinopse = sinopse || normalizarTexto(info.synopsis);
+        paginas = paginas ?? (info.page_count ? Number(info.page_count) : null);
+        anoEdicao = anoEdicao ?? (info.year ? Number(info.year) : null);
+        nomeAutor = nomeAutor || (info.authors && info.authors.length > 0 ? normalizarTexto(info.authors[0]) : null);
+        nomeEditora = nomeEditora || normalizarTexto(info.publisher);
+
+        if (!urlCapa && info.cover_url) {
+          urlCapa = info.cover_url;
+        }
+      }
     }
 
-    // 4. Se não passou obraId, cria ou reaproveita Autor e Obra
+    // 3. Fallback 2: Open Library
+    if (!titulo || !subtitulo || !sinopse || !paginas || !anoEdicao || !nomeAutor || !nomeEditora || !urlCapa) {
+      const openLibraryUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${cleanIsbn}&jscmd=data&format=json`;
+
+      try {
+        const openLibraryResponse = await fetch(openLibraryUrl, { headers: { 'User-Agent': 'BibliotecaApp/1.0' } });
+
+        if (openLibraryResponse.ok) {
+          const openLibraryData = await openLibraryResponse.json();
+          const livroOpenLibrary = openLibraryData[`ISBN:${cleanIsbn}`];
+
+          if (livroOpenLibrary) {
+            titulo = titulo || normalizarTexto(livroOpenLibrary.title);
+            subtitulo = subtitulo || normalizarTexto(livroOpenLibrary.subtitle);
+
+            if (typeof livroOpenLibrary.description === 'string') {
+              sinopse = sinopse || normalizarTexto(livroOpenLibrary.description);
+            } else if (livroOpenLibrary.description && typeof livroOpenLibrary.description === 'object') {
+              sinopse = sinopse || normalizarTexto(livroOpenLibrary.description.value);
+            }
+
+            paginas = paginas ?? (livroOpenLibrary.number_of_pages ? Number(livroOpenLibrary.number_of_pages) : null);
+            anoEdicao = anoEdicao ?? (livroOpenLibrary.publish_date ? Number(livroOpenLibrary.publish_date.substring(0, 4)) : null);
+            nomeAutor = nomeAutor || (Array.isArray(livroOpenLibrary.authors) && livroOpenLibrary.authors.length > 0 ? normalizarTexto(livroOpenLibrary.authors[0].name) : null);
+            nomeEditora = nomeEditora || (Array.isArray(livroOpenLibrary.publishers) && livroOpenLibrary.publishers.length > 0 ? normalizarTexto(livroOpenLibrary.publishers[0].name || livroOpenLibrary.publishers[0]) : null);
+
+            if (!urlCapa) {
+              if (Array.isArray(livroOpenLibrary.covers) && livroOpenLibrary.covers.length > 0) {
+                urlCapa = `https://covers.openlibrary.org/b/id/${livroOpenLibrary.covers[0]}-L.jpg`;
+              } else if (livroOpenLibrary.cover && (livroOpenLibrary.cover.medium || livroOpenLibrary.cover.large || livroOpenLibrary.cover.small)) {
+                urlCapa = livroOpenLibrary.cover.medium || livroOpenLibrary.cover.large || livroOpenLibrary.cover.small;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.log('Falha ao consultar a Open Library');
+      }
+    }
+
+    if (!titulo) {
+      return res.status(404).json({ erro: 'Livro não encontrado para este ISBN.' });
+    }
+
+    if (urlCapa) {
+      urlCapa = urlCapa.replace(/^http:\/\//i, 'https://');
+    }
+
+    const camposFaltantes = extrairCamposFaltantes({
+      titulo,
+      nomeAutor,
+      nomeEditora,
+      paginas,
+      anoEdicao
+    });
+
     let targetObraId = obraId ? Number(obraId) : null;
-    let obra = null;
 
     if (!targetObraId) {
       let autor = null;
@@ -139,58 +217,64 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         autor = existente || await prisma.autor.create({ data: { nome: nomeAutor } });
       }
 
-      obra = await prisma.obra.create({
+      const tituloFinal = titulo || `Livro ISBN ${cleanIsbn}`;
+
+      const novaObra = await prisma.obra.create({
         data: {
-          titulo: titulo,
-          subtitulo,
-          sinopse,
+          titulo: tituloFinal,
+          subtitulo: subtitulo || null,
+          sinopse: sinopse || null,
           autores: autor ? { connect: [{ id: autor.id }] } : undefined
         }
       });
-      targetObraId = obra.id;
-    } else {
-      obra = await prisma.obra.findUnique({ where: { id: targetObraId } });
+      targetObraId = novaObra.id;
+      await atualizarOrdenacaoAutor(targetObraId); 
     }
 
-    // 5. Cadastra Editora
+    const obraResposta = await prisma.obra.findUnique({
+      where: { id: targetObraId },
+      include: { autores: true }
+    });
+
     let editora = null;
     if (nomeEditora) {
       let existente = await prisma.editora.findFirst({ where: { nome: nomeEditora } });
       editora = existente || await prisma.editora.create({ data: { nome: nomeEditora } });
     }
 
-    // 6. Cadastra Exemplar vinculando a Localização (se informada)
     const exemplar = await prisma.exemplar.create({
       data: {
         obraId: targetObraId,
         editoraId: editora ? editora.id : null,
-        localizacaoId: localizacaoId ? Number(localizacaoId) : null, // ✅ Vincula a localização selecionada
         isbn: cleanIsbn,
-        paginas: paginas,
-        anoEdicao: anoEdicao
+        tituloEdicao: titulo || null,
+        paginas: paginas ? Number(paginas) : null,
+        anoEdicao: anoEdicao ? Number(anoEdicao) : null,
+        imagens: urlCapa 
+          ? { create: [{ url: urlCapa, descricao: 'Capa do Exemplar' }] } 
+          : undefined
+      },
+      include: {
+        imagens: true,
+        localizacao: true,
+        idioma: true,
+        editora: true
       }
     });
 
-    // Checagem dos campos faltantes
-    const camposFaltantes = [];
-    if (!subtitulo) camposFaltantes.push('Subtítulo');
-    if (!sinopse) camposFaltantes.push('Sinopse');
-    if (!paginas) camposFaltantes.push('Páginas');
-    if (!anoEdicao) camposFaltantes.push('Ano de Edição');
-    if (!editora) camposFaltantes.push('Editora');
-    if (!exemplar.localizacaoId) camposFaltantes.push('Localização');
-
     res.status(201).json({
       mensagem: 'Exemplar cadastrado com sucesso!',
-      obra,
-      exemplar,
-      camposFaltantes
+      camposFaltantes,
+      obra: obraResposta,
+      exemplar
     });
 
   } catch (err) {
+    console.error('❌ Erro interno:', err);
     res.status(500).json({ erro: err.message });
   }
 });
+
 // Cria uma localização evitando duplicatas (usado pelo botão "Criar Localização" do app)
 router.post('/localizacoes', async (req, res) => {
   try {
