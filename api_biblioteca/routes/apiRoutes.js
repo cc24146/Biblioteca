@@ -521,6 +521,26 @@ router.delete('/exemplares/:id', async (req, res) => {
   }
 });
 
+// Rota para excluir uma Localização pelo nome (usada pelo painel de filtros do app)
+router.delete('/localizacoes/por-nome/:nome', async (req, res) => {
+  try {
+    const nome = decodeURIComponent(req.params.nome).trim();
+    const loc = await prisma.localizacao.findFirst({
+      where: { descricao: { equals: nome, mode: 'insensitive' } }
+    });
+
+    if (!loc) {
+      return res.status(404).json({ erro: 'Localização não encontrada.' });
+    }
+
+    await prisma.localizacao.delete({ where: { id: loc.id } });
+    res.json({ mensagem: 'Localização excluída com sucesso.' });
+  } catch (err) {
+    console.error('Erro ao excluir localização:', err);
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // ==========================================
 // 2. FUNÇÃO E GERADOR DE ROTAS GENÉRICAS (CRUD)
 // ==========================================
