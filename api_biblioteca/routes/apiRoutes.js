@@ -464,6 +464,7 @@ router.put('/exemplares/:id', async (req, res) => {
   }
 });
 
+// GET /obras
 router.get('/obras', async (req, res) => {
   try {
     const { termo, localizacao, pagina = 1, limite = 50, ordenarPor } = req.query;
@@ -472,10 +473,9 @@ router.get('/obras', async (req, res) => {
     const limitNum = parseInt(limite);
     const skip = (pageNum - 1) * limitNum;
 
-    // Filtro dinâmico do Prisma
+    // Filtro principal da Obra
     const where = {};
 
-    // 1. Filtro por termo (Título ou Autor)
     if (termo && termo.trim() !== '') {
       where.OR = [
         { titulo: { contains: termo, mode: 'insensitive' } },
@@ -483,9 +483,10 @@ router.get('/obras', async (req, res) => {
       ];
     }
 
-    // 2. FILTRO POR LOCALIZAÇÃO (NOVO)
-    // Filtra obras que possuem pelo menos um exemplar na localização especificada
-    if (localizacao && localizacao.trim() !== '') {
+    const temFiltroLocalizacao = localizacao && localizacao.trim() !== '';
+
+    // Se houver filtro de localização, garante que a obra possui ao menos 1 exemplar nela
+    if (temFiltroLocalizacao) {
       where.exemplares = {
         some: {
           localizacao: {
@@ -495,32 +496,43 @@ router.get('/obras', async (req, res) => {
       };
     }
 
-    // Ordenação
     let orderBy = { titulo: 'asc' };
     if (ordenarPor === 'autor') {
-      orderBy = { autores: { _count: 'desc' } }; // Ou a ordenação padrão de autor que você utiliza
+      orderBy = { autores: { _count: 'desc' } };
     }
 
-    // Busca no Prisma com paginação e filtro
-    const [obras, total] = await Promise.all([
-      prisma.obra.findMany({
-        where,
-        skip,
-        take: limitNum,
-        orderBy,
-        include: {
-          autores: true,
-          generos: true,
-          capa: true,
-          exemplares: {
-            include: { localizacao: true, editora: true, idioma: true }
-          }
+    // Busca as obras com os exemplares filtrados
+    let obras = await prisma.obra.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy,
+      include: {
+        autores: true,
+        generos: true,
+        capa: true,
+        exemplares: {
+          // AQUI ESTÁ O SEGREDO: Se houver filtro de localização,
+          // traz APENAS os exemplares dessa localização!
+          where: temFiltroLocalizacao ? {
+            localizacao: {
+              descricao: { equals: localizacao.trim(), mode: 'insensitive' }
+            }
+          } : undefined,
+          include: { localizacao: true, editora: true, idioma: true }
         }
-      }),
-      prisma.obra.count({ where })
-    ]);
+      }
+    });
 
-    // Opcional: contar o total de exemplares resultantes
+    // Remove qualquer obra caso ela venha sem exemplares (garantia extra)
+    if (temFiltroLocalizacao) {
+      obras = obras.filter(obra => obra.exemplares && obra.exemplares.length > 0);
+    }
+
+    // Total de registros para a paginação
+    const total = await prisma.obra.count({ where });
+
+    // Soma do total de exemplares retornados nesta página
     const totalExemplares = obras.reduce((acc, item) => acc + (item.exemplares?.length || 0), 0);
 
     res.json({
