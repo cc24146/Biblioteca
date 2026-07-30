@@ -73,6 +73,7 @@ model Obra {
   id         Int        @id @default(autoincrement())
   titulo     String
   subtitulo  String?
+  sobrenomeAutorOrdenacao     String   @default("")  
   sinopse    String?
   capaId     Int?
   capa       Imagem?    @relation(fields: [capaId], references: [id])

@@ -43,6 +43,32 @@ function normalizarTexto(valor) {
   return texto || null;
 }
 
+function obterSobrenomeOrdenacao(nomeAutor) {
+  if (!nomeAutor) return '';
+  // remove acentos sem precisar de lib externa
+  const semAcento = nomeAutor.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const partes = semAcento.trim().split(/\s+/);
+  return (partes[partes.length - 1] || '').toLowerCase();
+}
+
+// Recalcula e salva o campo de ordenação de uma obra específica
+async function atualizarOrdenacaoAutor(obraId) {
+  const obra = await prisma.obra.findUnique({
+    where: { id: obraId },
+    include: { autores: true }
+  });
+  if (!obra) return;
+
+  // Usa o primeiro autor da lista — mesmo critério que o app já usa em _obterSobrenomeAutor
+  const primeiroAutor = obra.autores.length > 0 ? obra.autores[0].nome : null;
+  const sobrenome = obterSobrenomeOrdenacao(primeiroAutor);
+
+  await prisma.obra.update({
+    where: { id: obraId },
+    data: { sobrenomeAutorOrdenacao: sobrenome || '~sem autor' }
+  });
+}
+
 function extrairCamposFaltantes({ titulo, nomeAutor, nomeEditora, paginas, anoEdicao }) {
   const campos = [];
   if (!titulo) campos.push('titulo');
@@ -198,6 +224,7 @@ router.post('/exemplares/isbn/:isbn', async (req, res) => {
         }
       });
       targetObraId = novaObra.id;
+      await atualizarOrdenacaoAutor(targetObraId); 
     }
 
     const obraResposta = await prisma.obra.findUnique({
@@ -274,6 +301,7 @@ router.post('/exemplares/manual', async (req, res) => {
         }
       });
       finalObraId = novaObra.id;
+      await atualizarOrdenacaoAutor(finalObraId);
     }
 
     // 2. Trata / Resolve Editora (ID direto ou busca por Nome)
@@ -416,7 +444,7 @@ router.put('/obras/:id', async (req, res) => {
     let autoresConnect = undefined;
     if (autores && typeof autores === 'string') {
       const nomesAutores = autores.split(',').map(a => a.trim()).filter(a => a.length > 0);
-      
+
       const autoresIds = await Promise.all(
         nomesAutores.map(async (nome) => {
           let existente = await prisma.autor.findFirst({ where: { nome } });
@@ -427,9 +455,7 @@ router.put('/obras/:id', async (req, res) => {
         })
       );
 
-      autoresConnect = {
-        set: autoresIds
-      };
+      autoresConnect = { set: autoresIds };
     }
 
     const obraAtualizada = await prisma.obra.update({
@@ -443,14 +469,14 @@ router.put('/obras/:id', async (req, res) => {
       include: {
         autores: true,
         exemplares: {
-          include: {
-            localizacao: true,
-            idioma: true,
-            imagens: true,
-          },
+          include: { localizacao: true, idioma: true, imagens: true },
         },
       },
     });
+
+    if (autoresConnect) {
+      await atualizarOrdenacaoAutor(id); // agora fora do objeto, como código normal
+    }
 
     res.json(obraAtualizada);
   } catch (err) {
@@ -522,11 +548,9 @@ function criarRotasCrud(entidade) {
 
     let orderBy = undefined;
     if (entidade === 'obra') {
-      // 'titulo' tem coluna direta pra ordenar no banco.
-      // 'autor' não dá pra ordenar direito no banco sem uma coluna dedicada
-      // (autores é relação N:N) — por enquanto cai pra ordenar por id,
-      // e o cliente reordena só dentro da página já carregada.
-      orderBy = ordenarPor === 'titulo' ? { titulo: 'asc' } : { id: 'asc' };
+      orderBy = ordenarPor === 'titulo'
+        ? { titulo: 'asc' }
+        : { sobrenomeAutorOrdenacao: 'asc' }; // <-- agora ordena de verdade, com paginação estável
     }
 
     const [itens, totalItens] = await Promise.all([
@@ -593,3 +617,4 @@ modelos.forEach(entidade => {
 });
 
 module.exports = router;
+module.exports.atualizarOrdenacaoAutor = atualizarOrdenacaoAutor;
