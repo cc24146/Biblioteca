@@ -464,6 +464,79 @@ router.put('/exemplares/:id', async (req, res) => {
   }
 });
 
+router.get('/obras', async (req, res) => {
+  try {
+    const { termo, localizacao, pagina = 1, limite = 50, ordenarPor } = req.query;
+    
+    const pageNum = parseInt(pagina);
+    const limitNum = parseInt(limite);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Filtro dinâmico do Prisma
+    const where = {};
+
+    // 1. Filtro por termo (Título ou Autor)
+    if (termo && termo.trim() !== '') {
+      where.OR = [
+        { titulo: { contains: termo, mode: 'insensitive' } },
+        { autores: { some: { nome: { contains: termo, mode: 'insensitive' } } } }
+      ];
+    }
+
+    // 2. FILTRO POR LOCALIZAÇÃO (NOVO)
+    // Filtra obras que possuem pelo menos um exemplar na localização especificada
+    if (localizacao && localizacao.trim() !== '') {
+      where.exemplares = {
+        some: {
+          localizacao: {
+            descricao: { equals: localizacao.trim(), mode: 'insensitive' }
+          }
+        }
+      };
+    }
+
+    // Ordenação
+    let orderBy = { titulo: 'asc' };
+    if (ordenarPor === 'autor') {
+      orderBy = { autores: { _count: 'desc' } }; // Ou a ordenação padrão de autor que você utiliza
+    }
+
+    // Busca no Prisma com paginação e filtro
+    const [obras, total] = await Promise.all([
+      prisma.obra.findMany({
+        where,
+        skip,
+        take: limitNum,
+        orderBy,
+        include: {
+          autores: true,
+          generos: true,
+          capa: true,
+          exemplares: {
+            include: { localizacao: true, editora: true, idioma: true }
+          }
+        }
+      }),
+      prisma.obra.count({ where })
+    ]);
+
+    // Opcional: contar o total de exemplares resultantes
+    const totalExemplares = obras.reduce((acc, item) => acc + (item.exemplares?.length || 0), 0);
+
+    res.json({
+      dados: obras,
+      paginacao: {
+        total,
+        pagina: pageNum,
+        limite: limitNum,
+        totalExemplares
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 // Rota para atualizar os dados da Obra (Título, Subtítulo, Sinopse, Autores)
 router.put('/obras/:id', async (req, res) => {
   const id = Number(req.params.id);
